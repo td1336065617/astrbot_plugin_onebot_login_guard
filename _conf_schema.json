@@ -245,5 +245,23 @@
     "type": "int",
     "default": 3,
     "hint": "连续这么多轮都拿不到有效证据时，状态降级为未知并停止推送，避免一直推已经过期的二维码。"
+  },
+  "auto_refresh_qr": {
+    "description": "自动刷新二维码",
+    "type": "bool",
+    "default": true,
+    "hint": "协议端掉登录后只会生成一两次二维码就不再刷新，开启后插件会主动请求协议端重新出码并推送。需要填写（或自动识别到）协议端 WebUI 地址与 token。"
+  },
+  "qr_refresh_cooldown": {
+    "description": "自动刷新二维码的最小间隔（秒）",
+    "type": "int",
+    "default": 120,
+    "hint": "避免频繁打扰协议端。"
+  },
+  "qr_refresh_notify_interval": {
+    "description": "二维码刷新推送的最小间隔（秒）",
+    "type": "int",
+    "default": 600,
+    "hint": "协议端等待扫码时会每两分钟左右重新出一张二维码；按实例节流，避免频繁推送。"
   }
 }

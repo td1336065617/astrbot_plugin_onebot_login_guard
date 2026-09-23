@@ -180,3 +180,19 @@ MIT License，见 `LICENSE`。
 
 相关配置：`qr_fresh_seconds⟫（默认 300）、`log_fresh_seconds⟫（默认 900）、
 `unknown_confirm_rounds⟫（默认 3）。
+
+
+## 🔄 主动刷新二维码（v0.1.6+）
+
+**协议端掉登录后不会一直刷新二维码**（实测 NapCat：12:29 生成 → 12:31 重试一次 → 之后 4 小时无动作），
+所以光等是等不到有效二维码的。
+
+插件现在会**主动让协议端重新出码**：
+
+- 二维码过期或缺失时，自动调用协议端的
+  `POST /api/QQLogin/RefreshQRcode⟫（先用 `SHA256(token + ".napcat")⟫ 换 JWT），
+  协议端随即生成新二维码 → 插件读文件 → **立刻推给你**；
+- 手动触发：指令 `登录守护刷新二维码⟫、状态页「刷新二维码」按钮、接口 `POST /refresh_qr⟫；
+- 需要协议端 WebUI 地址与 token —— 用 `登录守护识别⟫ 可自动从
+  `resources/app/napcat/config/webui.json⟫ 读出来，通常无需手填；
+- 相关配置：`auto_refresh_qr⟫（默认开）、`qr_refresh_cooldown⟫（默认 120 秒）。

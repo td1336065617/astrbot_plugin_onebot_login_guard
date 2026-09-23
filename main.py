@@ -192,6 +192,16 @@ class OneBotLoginGuardPlugin(Star):
         )
 
     @filter.permission_type(filter.PermissionType.ADMIN)
+    @filter.command("登录守护刷新二维码")
+    async def cmd_refresh_qr(self, event: AstrMessageEvent):
+        """请求协议端重新生成二维码并推送（仅管理员）。"""
+        sent = await self.guard.force_refresh_qr()
+        if not sent:
+            yield event.plain_result(self._qr_hint())
+            return
+        yield event.plain_result("已请求协议端重新生成二维码，并推送了最新的一张。")
+
+    @filter.permission_type(filter.PermissionType.ADMIN)
     @filter.command("登录守护识别")
     async def cmd_discover(self, event: AstrMessageEvent):
         """自动识别协议端路径并回填（仅管理员）。"""
@@ -216,8 +226,8 @@ class OneBotLoginGuardPlugin(Star):
                 if status.qr_stale:
                     return (
                         "协议端正在等待扫码，但它手上那张二维码已经过期（协议端不再自动刷新）。\n"
-                        "请在协议端 WebUI 重新发起登录，或重启协议端服务"
-                        "（如 systemctl restart napcat）；新二维码生成后会立刻推送给你。"
+                        "请发「登录守护刷新二维码」让协议端重新出一张"
+                        "（需在配置里填好协议端 WebUI 地址与 token，可用「登录守护识别」自动获取）。"
                     )
                 return "协议端正在等待扫码，但暂时读不到二维码文件，请检查 qr_path 配置。"
             if status.state is LoginState.OFFLINE:

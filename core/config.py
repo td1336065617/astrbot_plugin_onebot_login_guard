@@ -101,6 +101,9 @@ class GuardSettings:
     qr_fresh_seconds: int = 300
     log_fresh_seconds: int = 900
     unknown_confirm_rounds: int = 3
+    auto_refresh_qr: bool = True
+    qr_refresh_cooldown: int = 120
+    qr_refresh_notify_interval: int = 600
     max_events: int = 200
     log_tail_bytes: int = 65536
     instances: list[InstanceConfig] = field(default_factory=list)
@@ -234,6 +237,11 @@ def parse_settings(raw: dict | None) -> GuardSettings:
         qr_fresh_seconds=_as_int(raw.get("qr_fresh_seconds"), 300, 30, 3600),
         log_fresh_seconds=_as_int(raw.get("log_fresh_seconds"), 900, 60, 86400),
         unknown_confirm_rounds=_as_int(raw.get("unknown_confirm_rounds"), 3, 1, 20),
+        auto_refresh_qr=_as_bool(raw.get("auto_refresh_qr"), True),
+        qr_refresh_cooldown=_as_int(raw.get("qr_refresh_cooldown"), 120, 30, 3600),
+        qr_refresh_notify_interval=_as_int(
+            raw.get("qr_refresh_notify_interval"), 600, 60, 86400
+        ),
         max_events=_as_int(raw.get("max_events"), 200, 10, 5000),
         log_tail_bytes=_as_int(raw.get("log_tail_bytes"), 65536, 4096, 1048576),
         instances=instances,

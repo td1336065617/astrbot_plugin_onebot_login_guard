@@ -163,3 +163,20 @@ def test_resend_qr_refuses_when_online(tmp_path):
     sent = asyncio.run(guard.resend_qr())
     assert sent == []
 
+
+def test_qr_refreshed_is_throttled_per_instance(tmp_path):
+    """协议端每两分钟出一张新码，不能让推送跟着刷屏。"""
+    source = tmp_path / "qrcode.png"
+    source.write_bytes(b"OLD")
+    results = [
+        pr(LoginState.NEED_LOGIN, qr_hash="h1", qr_path=str(source)),
+        pr(LoginState.NEED_LOGIN, qr_hash="h2", qr_path=str(source)),
+        pr(LoginState.NEED_LOGIN, qr_hash="h3", qr_path=str(source)),
+    ]
+    guard, notifier = build_guard(
+        tmp_path, results, notify_cooldown=600, qr_refresh_notify_interval=3600
+    )
+    for _ in range(3):
+        asyncio.run(guard.tick())
+    # 首次 need_login 会发；第一次 qr_refreshed 放行；后续被按实例节流
+    assert notifier.sent == ["need_login", "qr_refreshed"]

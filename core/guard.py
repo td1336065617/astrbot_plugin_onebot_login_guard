@@ -7,7 +7,8 @@ from pathlib import Path
 from typing import Any
 
 from .config import GuardSettings, InstanceConfig
-from .models import GuardEvent, InstanceStatus, LoginState, NotificationRecord
+from .models import GuardEvent, InstanceStatus, LoginState, NotificationRecord, ProbeResult
+from .napcat_api import NapCatWebUI, NapCatWebUIError
 from .notifiers import build_notifiers, render_text
 from .probes import ProbeManager
 from .qr import copy_qr
@@ -44,6 +45,13 @@ class Guard:
             for item in settings.instances
         }
         self._last_notify: dict[str, float] = {}
+        self._last_qr_refresh: dict[str, float] = {}
+        # 发送失败的通知要重试：插件可能在平台适配器加载完成前就探测到了事件
+        self._pending_events: dict[str, GuardEvent] = {}
+        self._pending_at: dict[str, float] = {}
+        self._pending_tries: dict[str, int] = {}
+        self._retry_interval = 60.0
+        self._retry_limit = 10
         self._task: asyncio.Task | None = None
         self._running = False
 
@@ -91,6 +99,11 @@ class Guard:
             instance.instance_id, InstanceStatus(instance.instance_id)
         )
         result = await self.probe_manager.probe(instance)
+        if result.state is LoginState.NEED_LOGIN and (result.stale or not result.qr_path):
+            # 协议端掉登录后不会一直刷新二维码（实测会停），过期就主动让它重新出一张
+            refreshed = await self._refresh_qrcode(instance)
+            if refreshed is not None:
+                result = refreshed
         status.last_probe_ts = result.ts
         status.source = result.source
         status.detail = result.detail
@@ -231,16 +244,116 @@ class Guard:
             ):
                 await self._dispatch(event, instance)
 
+        await self._retry_pending(instance)
+
+    async def _retry_pending(self, instance: InstanceConfig) -> None:
+        """重试此前发送失败的通知（例如平台适配器还没加载完）。"""
+        event = self._pending_events.get(instance.instance_id)
+        if event is None:
+            return
+        now = time.time()
+        if now - self._pending_at.get(instance.instance_id, 0.0) < self._retry_interval:
+            return
+        tries = self._pending_tries.get(instance.instance_id, 0) + 1
+        if tries > self._retry_limit:
+            if self.logger is not None:
+                self.logger.warning(
+                    "登录守护：通知重试 %d 次仍失败，放弃本轮（%s）",
+                    self._retry_limit,
+                    event.kind,
+                )
+            self._pending_events.pop(instance.instance_id, None)
+            self._pending_at.pop(instance.instance_id, None)
+            self._pending_tries.pop(instance.instance_id, None)
+            return
+        self._pending_tries[instance.instance_id] = tries
+        self._pending_at[instance.instance_id] = now
+        if self.logger is not None:
+            self.logger.info(
+                "登录守护：重试此前失败的通知（第 %d 次，%s）", tries, event.kind
+            )
+        await self._dispatch(event, instance)
+
+    # ---------------- 主动刷新二维码 ----------------
+    async def _refresh_qrcode(
+        self, instance: InstanceConfig, *, force: bool = False
+    ) -> ProbeResult | None:
+        """请求协议端 WebUI 重新生成二维码，成功则返回带新码的探测结果。"""
+        if not (instance.http_url and instance.http_token):
+            return None
+        if not force and not self.settings.auto_refresh_qr:
+            return None
+        now = time.time()
+        if (
+            not force
+            and now - self._last_qr_refresh.get(instance.instance_id, 0.0)
+            < self.settings.qr_refresh_cooldown
+        ):
+            return None
+        self._last_qr_refresh[instance.instance_id] = now
+        client = NapCatWebUI(instance.http_url, instance.http_token)
+        try:
+            qr_url = await client.refresh_qrcode()
+        except NapCatWebUIError as exc:
+            if self.logger is not None:
+                self.logger.warning(
+                    "登录守护：请求协议端刷新二维码失败（%s）：%s",
+                    instance.instance_id,
+                    exc,
+                )
+            return None
+        if self.logger is not None:
+            self.logger.info(
+                "登录守护：已请求协议端重新生成二维码（实例 %s）", instance.instance_id
+            )
+        # 等协议端把图片写盘，再读一次
+        for _ in range(6):
+            await asyncio.sleep(0.5)
+            fresh = await self.probe_manager.qrfile.probe(instance)
+            if fresh.state is LoginState.NEED_LOGIN:
+                return ProbeResult(
+                    instance_id=instance.instance_id,
+                    state=LoginState.NEED_LOGIN,
+                    source="napcat-webui",
+                    detail="已请求协议端重新生成二维码",
+                    qr_path=fresh.qr_path,
+                    qr_url=qr_url or fresh.qr_url,
+                    qr_hash=fresh.qr_hash,
+                    stale=False,
+                    ts=int(time.time()),
+                )
+        if self.logger is not None:
+            self.logger.warning(
+                "登录守护：协议端已重新生成二维码，但未读到新的图片文件（检查 qr_path）"
+            )
+        return None
+
+    async def force_refresh_qr(self, instance_id: str | None = None) -> list[dict[str, Any]]:
+        """手动刷新二维码并推送（忽略冷却）。"""
+        for instance in self.settings.instances:
+            if instance_id and instance.instance_id != instance_id:
+                continue
+            await self._refresh_qrcode(instance, force=True)
+        await self.tick()
+        return await self.resend_qr(instance_id)
+
     # ---------------- 去重 ----------------
     def _should_notify(
         self, instance_id: str, kind: str, qr_hash: str, *, force: bool = False
     ) -> bool:
         if force or self.settings.notify_cooldown <= 0:
             return True
-        key = instance_id + ":" + kind + ":" + (qr_hash or "")
+        if kind == "qr_refreshed":
+            # 二维码刷新是高频事件（协议端每两分钟出一张），按实例节流，
+            # 否则会变成每两分钟推一张码的骚扰。
+            key = instance_id + ":" + kind
+            cooldown = self.settings.qr_refresh_notify_interval
+        else:
+            key = instance_id + ":" + kind + ":" + (qr_hash or "")
+            cooldown = self.settings.notify_cooldown
         now = time.time()
         last = self._last_notify.get(key, 0.0)
-        if now - last < self.settings.notify_cooldown:
+        if now - last < cooldown:
             return False
         self._last_notify[key] = now
         return True
@@ -271,6 +384,15 @@ class Guard:
                     ).to_dict()
                 )
         self.store.append(event.to_dict(), records)
+        delivered = any(item["ok"] for item in records)
+        if records and not delivered:
+            # 全部渠道都失败：留着重试，否则这一次告警就永远丢了
+            self._pending_events[event.instance_id] = event
+            self._pending_at.setdefault(event.instance_id, time.time())
+        elif delivered:
+            self._pending_events.pop(event.instance_id, None)
+            self._pending_at.pop(event.instance_id, None)
+            self._pending_tries.pop(event.instance_id, None)
         if self.logger is not None:
             self.logger.info(
                 "登录守护：事件 %s（%s）已分发，渠道结果=%s",

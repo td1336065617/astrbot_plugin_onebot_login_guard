@@ -38,6 +38,7 @@
     <button id="btn-probe">立即探测</button>
     <button id="btn-resend">重发二维码</button>
     <button id="btn-test">测试通知</button>
+    <button id="btn-refresh-qr">刷新二维码</button>
     <button id="btn-discover">自动识别协议端</button>
   </div>
 
@@ -146,6 +147,13 @@
   document.getElementById("btn-test").onclick = function () {
     call("test_notify", "POST").then(function (res) {
       alert("已发送测试通知：" + (((res && res.data) || {}).channels || []).join("、"));
+      refresh();
+    });
+  };
+
+  document.getElementById("btn-refresh-qr").onclick = function () {
+    call("refresh_qr", "POST", {}).then(function (res) {
+      alert(res && res.status === "success" ? "已请求协议端重新生成二维码并推送" : ((res && res.message) || "刷新失败"));
       refresh();
     });
   };

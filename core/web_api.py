@@ -84,6 +84,15 @@ def register_web_apis(plugin: Any) -> None:
                 )
         return error_response("当前没有二维码")
 
+    async def refresh_qr_handler():
+        payload = await request.json(default=None)
+        payload = payload if isinstance(payload, dict) else {}
+        instance_id = str(payload.get("instance_id") or "").strip() or None
+        sent = await plugin.guard.force_refresh_qr(instance_id)
+        if not sent:
+            return error_response(plugin._qr_hint())
+        return json_response({"status": "success", "data": {"sent": sent}})
+
     async def discover_handler():
         data = await plugin.apply_auto_detect(force=False)
         return json_response({"status": "success", "data": data})
@@ -103,6 +112,7 @@ def register_web_apis(plugin: Any) -> None:
         ("/events", events_handler, ["GET"], "最近事件"),
         ("/qr", qr_handler, ["GET"], "当前二维码图片"),
         ("/qr_data", qr_data_handler, ["GET"], "当前二维码（data URL）"),
+        ("/refresh_qr", refresh_qr_handler, ["POST"], "请求协议端重新生成二维码并推送"),
         ("/discover", discover_handler, ["GET"], "自动识别协议端路径"),
         ("/apply_discovery", apply_discovery_handler, ["POST"], "应用自动识别结果"),
     )
