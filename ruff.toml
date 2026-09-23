@@ -1,0 +1,18 @@
+# 本插件 ruff 配置（与作者其它插件保持一致）。
+line-length = 100
+target-version = "py310"
+
+[lint]
+select = ["E", "F", "W", "I", "UP", "B", "SIM", "RUF"]
+ignore = [
+  "E501",   # 长行由人工把控（中文注释较多）
+  "BLE001", # 插件边界需要捕获所有异常，避免影响 AstrBot 主流程
+  "S110",   # 失败时只记录，不抛出
+  "SIM105", # 防御式代码里 try/except/pass 比 suppress 更直观
+  "RUF001", # 中文标点
+  "RUF002",
+  "RUF003",
+]
+
+[lint.per-file-ignores]
+"main.py" = ["E402"]  # 入口需先注入 sys.path 再导入

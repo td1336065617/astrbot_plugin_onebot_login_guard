@@ -1,0 +1,159 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>OneBot 登录守护</title>
+<style>
+  :root { color-scheme: light dark; }
+  body { font-family: system-ui, -apple-system, "Segoe UI", "Noto Sans SC", sans-serif; margin: 0; padding: 24px; background: #f6f7f9; color: #1f2328; }
+  h1 { font-size: 20px; margin: 0 0 4px; }
+  .sub { color: #6b7280; font-size: 13px; margin-bottom: 16px; }
+  .cards { display: grid; grid-template-columns: repeat(auto-fill, minmax(280px, 1fr)); gap: 12px; }
+  .card { background: #fff; border: 1px solid #e5e7eb; border-radius: 10px; padding: 14px; }
+  .row { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+  .name { font-weight: 600; }
+  .badge { font-size: 12px; padding: 2px 8px; border-radius: 999px; background: #e5e7eb; }
+  .badge.online { background: #dcfce7; color: #166534; }
+  .badge.need_login { background: #fef3c7; color: #92400e; }
+  .badge.offline { background: #fee2e2; color: #991b1b; }
+  .badge.unknown { background: #e5e7eb; color: #374151; }
+  .detail { color: #6b7280; font-size: 12px; margin-top: 6px; word-break: break-all; }
+  .qr { margin-top: 10px; text-align: center; }
+  .qr img { width: 180px; height: 180px; image-rendering: pixelated; border: 1px solid #e5e7eb; border-radius: 8px; background: #fff; }
+  .actions { margin: 16px 0; display: flex; gap: 8px; flex-wrap: wrap; }
+  button { border: 1px solid #d1d5db; background: #fff; border-radius: 8px; padding: 8px 14px; cursor: pointer; font-size: 13px; }
+  button:hover { background: #f3f4f6; }
+  table { width: 100%; border-collapse: collapse; background: #fff; border: 1px solid #e5e7eb; border-radius: 10px; overflow: hidden; }
+  th, td { text-align: left; padding: 8px 10px; border-bottom: 1px solid #f1f3f5; font-size: 13px; }
+  th { background: #fafafa; color: #6b7280; font-weight: 500; }
+  .muted { color: #9ca3af; }
+</style>
+</head>
+<body>
+  <h1>🔐 OneBot 登录守护</h1>
+  <div class="sub" id="sub">正在加载…</div>
+
+  <div class="actions">
+    <button id="btn-probe">立即探测</button>
+    <button id="btn-resend">重发二维码</button>
+    <button id="btn-test">测试通知</button>
+  </div>
+
+  <div class="cards" id="cards"></div>
+
+  <h2 style="font-size:16px;margin:24px 0 8px;">最近事件</h2>
+  <table>
+    <thead><tr><th>时间</th><th>实例</th><th>事件</th><th>渠道结果</th></tr></thead>
+    <tbody id="events"></tbody>
+  </table>
+
+<script>
+(function () {
+  var api = window.AstrBotPluginPage;
+
+  function call(path, method, body) {
+    if (api && typeof api.apiGet === "function") {
+      return method === "GET" ? api.apiGet(path) : api.apiPost(path, body || {});
+    }
+    return fetch(path, {
+      method: method,
+      headers: { "Content-Type": "application/json" },
+      body: method === "GET" ? undefined : JSON.stringify(body || {}),
+    }).then(function (r) { return r.json(); });
+  }
+
+  function fmtTime(ts) {
+    if (!ts) return "—";
+    var d = new Date(ts * 1000);
+    return d.toLocaleString();
+  }
+
+  function renderCards(instances) {
+    var box = document.getElementById("cards");
+    box.innerHTML = "";
+    if (!instances || !instances.length) {
+      box.innerHTML = '<div class="card muted">未配置被守护实例</div>';
+      return;
+    }
+    instances.forEach(function (item) {
+      var card = document.createElement("div");
+      card.className = "card";
+      card.innerHTML =
+        '<div class="row"><span class="name">' + item.instance_id + '</span>' +
+        '<span class="badge ' + item.state + '">' + item.state_label + '</span></div>' +
+        '<div class="detail">' + (item.detail || "—") + '</div>' +
+        '<div class="detail">来源：' + (item.source || "—") +
+        ' · 探测：' + fmtTime(item.last_probe_ts) + '</div>' +
+        (item.qr_url ? '<div class="detail">解码链接：' + item.qr_url + '</div>' : "") +
+        '<div class="qr"></div>';
+      box.appendChild(card);
+      if (item.has_qr) {
+        call("qr_data", "GET").then(function (res) {
+          var url = res && res.data && res.data.data_url;
+          if (url) {
+            card.querySelector(".qr").innerHTML = '<img src="' + url + '" alt="二维码" />';
+          }
+        });
+      }
+    });
+  }
+
+  function renderEvents(events) {
+    var body = document.getElementById("events");
+    body.innerHTML = "";
+    if (!events || !events.length) {
+      body.innerHTML = '<tr><td colspan="4" class="muted">暂无事件</td></tr>';
+      return;
+    }
+    events.forEach(function (item) {
+      var ev = item.event || {};
+      var notes = (item.notifications || []).map(function (n) {
+        return n.channel + (n.ok ? " ✓" : " ✗");
+      }).join("、") || "无渠道";
+      var tr = document.createElement("tr");
+      tr.innerHTML =
+        "<td>" + fmtTime(ev.ts) + "</td>" +
+        "<td>" + (ev.instance_id || "—") + "</td>" +
+        "<td>" + (ev.kind_label || ev.kind || "—") + "</td>" +
+        "<td>" + notes + "</td>";
+      body.appendChild(tr);
+    });
+  }
+
+  function refresh() {
+    call("status", "GET").then(function (res) {
+      var data = (res && res.data) || {};
+      document.getElementById("sub").textContent =
+        "轮询间隔 " + (data.poll_interval || "-") + "s · 渠道：" +
+        ((data.channels || []).join("、") || "未配置");
+      renderCards(data.instances || []);
+      renderEvents(data.events || []);
+    });
+  }
+
+  document.getElementById("btn-probe").onclick = function () {
+    call("probe", "POST").then(refresh);
+  };
+  document.getElementById("btn-resend").onclick = function () {
+    call("resend_qr", "POST").then(function (res) {
+      alert(res && res.status === "success" ? "已重发二维码" : "当前没有可发送的二维码");
+      refresh();
+    });
+  };
+  document.getElementById("btn-test").onclick = function () {
+    call("test_notify", "POST").then(function (res) {
+      alert("已发送测试通知：" + (((res && res.data) || {}).channels || []).join("、"));
+      refresh();
+    });
+  };
+
+  if (api && typeof api.ready === "function") {
+    api.ready(refresh);
+  } else {
+    refresh();
+  }
+})();
+</script>
+</body>
+</html>
