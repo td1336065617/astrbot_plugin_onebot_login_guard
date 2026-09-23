@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import sys
+import time
 from pathlib import Path
 
 _PLUGIN_ROOT = str(Path(__file__).resolve().parent)
@@ -14,6 +15,13 @@ from astrbot.api.star import Context, Star, StarTools
 
 from .core.config import parse_settings
 from .core.guard import Guard
+from .core.schema_options import (
+    TEMPLATE_KEY,
+    collect_db_sessions,
+    inject_schema,
+    platform_entries,
+    session_entries,
+)
 from .core.web_api import register_web_apis
 
 PLUGIN_NAME = "astrbot_plugin_onebot_login_guard"
@@ -24,16 +32,75 @@ class OneBotLoginGuardPlugin(Star):
 
     def __init__(self, context: Context, config: dict | None = None) -> None:
         super().__init__(context)
-        self.config = config if isinstance(config, dict) else {}
+        # 保留 AstrBot 的配置对象本身：仪表盘每次打开配置页都会读取它的 schema，
+        # 在运行时注入 options 即可把「实例 / 会话」渲染成下拉框。
+        self._config_obj = config if isinstance(config, dict) else {}
+        self.config = self._config_obj
         self.settings = parse_settings(self.config)
         self.data_dir = Path(StarTools.get_data_dir(PLUGIN_NAME))
         self.guard = Guard(self.settings, context, self.data_dir, logger=self.logger)
+        self._observed_umos: list[str] = []
+        self._db_umos: list[str] = []
+        self._last_db_refresh = 0.0
         try:
             register_web_apis(self)
         except Exception as exc:
             logger.error("OneBot 登录守护：注册 Web API 失败：%s", exc)
 
+    # ---------------- 配置页下拉选项 ----------------
+    def _normalize_instances(self) -> None:
+        """为旧配置补上 template_list 需要的 __template_key。"""
+        raw = self._config_obj.get("instances")
+        if not isinstance(raw, list):
+            return
+        changed = False
+        for item in raw:
+            if isinstance(item, dict) and not item.get("__template_key"):
+                item["__template_key"] = TEMPLATE_KEY
+                changed = True
+        if changed:
+            try:
+                self._config_obj.save_config()
+                self.logger.info("OneBot 登录守护：已为现有实例补全模板标识")
+            except Exception as exc:
+                self.logger.warning("OneBot 登录守护：写入配置失败：%s", exc)
+
+    async def _refresh_schema_options(self, *, force_db: bool = False) -> None:
+        """把平台实例与会话注入配置 schema，供配置页渲染下拉框。"""
+        schema = getattr(self._config_obj, "schema", None)
+        if not isinstance(schema, dict):
+            return
+        now = time.time()
+        if force_db or now - self._last_db_refresh >= 60:
+            self._last_db_refresh = now
+            self._db_umos = await collect_db_sessions(self.context)
+        platforms = platform_entries(self.context)
+        sessions = session_entries(self._observed_umos, self._db_umos)
+        if inject_schema(schema, platforms, sessions):
+            self.logger.debug(
+                "OneBot 登录守护：配置下拉已更新（平台 %d 个，会话 %d 个）",
+                len(platforms),
+                len(sessions),
+            )
+
+    @filter.on_platform_loaded()
+    async def _on_platform_loaded(self, *args, **kwargs) -> None:
+        """平台加载完成后刷新下拉选项。"""
+        await self._refresh_schema_options(force_db=True)
+
+    @filter.event_message_type(filter.EventMessageType.ALL)
+    async def _observe_session(self, event: AstrMessageEvent):
+        """记录机器人见过的会话，作为「通知会话」下拉的候选项。"""
+        umo = str(getattr(event, "unified_msg_origin", "") or "").strip()
+        if not umo or umo in self._observed_umos:
+            return
+        self._observed_umos.append(umo)
+        del self._observed_umos[:-200]
+        await self._refresh_schema_options()
+
     async def initialize(self) -> None:
+        self._normalize_instances()
+        await self._refresh_schema_options(force_db=True)
         await self.guard.start()
         self.logger.info(
             "OneBot 登录守护已启动：实例=%s 渠道=%s 轮询=%ss",
