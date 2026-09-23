@@ -1,14 +1,56 @@
 {
-  "guard_enabled": {"description": "启用登录守护", "type": "bool", "default": true},
-  "poll_interval": {"description": "轮询间隔（秒）", "type": "int", "default": 30, "hint": "10~600。太短会频繁读日志，太长会延迟发现掉线。"},
-  "notify_cooldown": {"description": "同类通知冷却（秒）", "type": "int", "default": 600},
-  "offline_confirm_rounds": {"description": "判定掉线的连续失败次数", "type": "int", "default": 2, "hint": "用于吸收协议端重启抖动，避免误报。"},
-  "notify_on_recover": {"description": "恢复登录时通知", "type": "bool", "default": true},
-  "qr_refresh_notify": {"description": "二维码刷新时重发", "type": "bool", "default": true},
-  "send_qr_image": {"description": "发送二维码图片", "type": "bool", "default": true},
-  "send_qr_url": {"description": "附带二维码解码链接", "type": "bool", "default": true},
-  "max_events": {"description": "保留事件条数", "type": "int", "default": 200},
-  "log_tail_bytes": {"description": "每次读取日志的尾部字节数", "type": "int", "default": 65536},
+  "guard_enabled": {
+    "description": "启用登录守护",
+    "type": "bool",
+    "default": true
+  },
+  "poll_interval": {
+    "description": "轮询间隔（秒）",
+    "type": "int",
+    "default": 30,
+    "hint": "10~600。太短会频繁读日志，太长会延迟发现掉线。"
+  },
+  "notify_cooldown": {
+    "description": "同类通知冷却（秒）",
+    "type": "int",
+    "default": 600
+  },
+  "offline_confirm_rounds": {
+    "description": "判定掉线的连续失败次数",
+    "type": "int",
+    "default": 2,
+    "hint": "用于吸收协议端重启抖动，避免误报。"
+  },
+  "notify_on_recover": {
+    "description": "恢复登录时通知",
+    "type": "bool",
+    "default": true
+  },
+  "qr_refresh_notify": {
+    "description": "二维码刷新时重发",
+    "type": "bool",
+    "default": true
+  },
+  "send_qr_image": {
+    "description": "发送二维码图片",
+    "type": "bool",
+    "default": true
+  },
+  "send_qr_url": {
+    "description": "附带二维码解码链接",
+    "type": "bool",
+    "default": true
+  },
+  "max_events": {
+    "description": "保留事件条数",
+    "type": "int",
+    "default": 200
+  },
+  "log_tail_bytes": {
+    "description": "每次读取日志的尾部字节数",
+    "type": "int",
+    "default": 65536
+  },
   "instances": {
     "description": "被守护的 OneBot 实例（可多个）",
     "type": "template_list",
@@ -19,14 +61,53 @@
         "name": "OneBot 实例",
         "hint": "一个被守护的协议端实例（NapCat / Lagrange / go-cqhttp 等）",
         "items": {
-          "instance_id": {"description": "实例标识", "type": "string", "default": "default", "hint": "自定义且唯一，用于通知与状态展示。"},
-          "platform_id": {"description": "AstrBot 平台实例", "type": "string", "default": "default", "hint": "从下拉框选择（与 AstrBot「消息平台」里该 OneBot 适配器的 ID 一致）。"},
-          "log_path": {"description": "协议端日志路径", "type": "string", "default": "", "hint": "与 AstrBot 同主机时填写，可从中识别「需要登录」并提取二维码链接。"},
-          "qr_path": {"description": "二维码图片路径", "type": "string", "default": "", "hint": "协议端保存登录二维码的位置（如 NapCat 的 cache/qrcode.png）。"},
-          "http_url": {"description": "协议端 WebUI 地址（可选）", "type": "string", "default": "", "hint": "跨主机场景使用。"},
-          "http_token": {"description": "WebUI token（可选）", "type": "string", "default": "", "secret": true},
-          "regex_need_login": {"description": "自定义『需要登录』正则", "type": "string", "default": "", "hint": "留空使用内置规则（适配 NapCat / Lagrange / go-cqhttp）。"},
-          "regex_online": {"description": "自定义『登录成功』正则", "type": "string", "default": ""}
+          "instance_id": {
+            "description": "实例标识",
+            "type": "string",
+            "default": "default",
+            "hint": "自定义且唯一，用于通知与状态展示。"
+          },
+          "platform_id": {
+            "description": "AstrBot 平台实例",
+            "type": "string",
+            "default": "default",
+            "hint": "从下拉框选择（与 AstrBot「消息平台」里该 OneBot 适配器的 ID 一致）。"
+          },
+          "log_path": {
+            "description": "协议端日志路径",
+            "type": "string",
+            "default": "",
+            "hint": "留空自动识别。与 AstrBot 同主机时填写，可从中识别「需要登录」并提取二维码链接；NapCat 默认关闭文件日志，留空也能靠二维码文件工作。"
+          },
+          "qr_path": {
+            "description": "二维码图片路径",
+            "type": "string",
+            "default": "",
+            "hint": "留空自动识别。协议端保存登录二维码的位置（如 NapCat 的 resources/app/napcat/cache/qrcode.png）。"
+          },
+          "http_url": {
+            "description": "协议端 WebUI 地址（可选）",
+            "type": "string",
+            "default": "",
+            "hint": "留空自动识别（读取 NapCat 的 webui.json）。跨主机场景使用。"
+          },
+          "http_token": {
+            "description": "WebUI token（可选）",
+            "type": "string",
+            "default": "",
+            "secret": true
+          },
+          "regex_need_login": {
+            "description": "自定义『需要登录』正则",
+            "type": "string",
+            "default": "",
+            "hint": "留空使用内置规则（适配 NapCat / Lagrange / go-cqhttp）。"
+          },
+          "regex_online": {
+            "description": "自定义『登录成功』正则",
+            "type": "string",
+            "default": ""
+          }
         }
       }
     }
@@ -46,10 +127,41 @@
       "description": "渠道",
       "type": "object",
       "items": {
-        "type": {"description": "类型", "type": "string", "options": ["wecom", "dingtalk", "feishu", "telegram", "generic"], "labels": ["企业微信", "钉钉", "飞书", "Telegram", "通用 Webhook"], "default": "generic"},
-        "url": {"description": "Webhook 地址", "type": "string", "default": ""},
-        "token": {"description": "密钥 / token（telegram 的 bot token）", "type": "string", "default": "", "secret": true},
-        "at_mobiles": {"description": "钉钉 @手机号（可选）", "type": "list", "default": []}
+        "type": {
+          "description": "类型",
+          "type": "string",
+          "options": [
+            "wecom",
+            "dingtalk",
+            "feishu",
+            "telegram",
+            "generic"
+          ],
+          "labels": [
+            "企业微信",
+            "钉钉",
+            "飞书",
+            "Telegram",
+            "通用 Webhook"
+          ],
+          "default": "generic"
+        },
+        "url": {
+          "description": "Webhook 地址",
+          "type": "string",
+          "default": ""
+        },
+        "token": {
+          "description": "密钥 / token（telegram 的 bot token）",
+          "type": "string",
+          "default": "",
+          "secret": true
+        },
+        "at_mobiles": {
+          "description": "钉钉 @手机号（可选）",
+          "type": "list",
+          "default": []
+        }
       }
     }
   },
@@ -57,14 +169,69 @@
     "description": "邮件通知",
     "type": "object",
     "items": {
-      "enable": {"description": "启用邮件通知", "type": "bool", "default": false},
-      "smtp_host": {"description": "SMTP 服务器", "type": "string", "default": ""},
-      "smtp_port": {"description": "SMTP 端口", "type": "int", "default": 465},
-      "security": {"description": "加密方式", "type": "string", "options": ["ssl", "starttls", "none"], "labels": ["SSL", "STARTTLS", "不加密"], "default": "ssl"},
-      "username": {"description": "登录用户名", "type": "string", "default": ""},
-      "password": {"description": "登录密码 / 授权码", "type": "string", "default": "", "secret": true},
-      "from_addr": {"description": "发件人（留空则用用户名）", "type": "string", "default": ""},
-      "to_addrs": {"description": "收件人列表", "type": "list", "default": []}
+      "enable": {
+        "description": "启用邮件通知",
+        "type": "bool",
+        "default": false
+      },
+      "smtp_host": {
+        "description": "SMTP 服务器",
+        "type": "string",
+        "default": ""
+      },
+      "smtp_port": {
+        "description": "SMTP 端口",
+        "type": "int",
+        "default": 465
+      },
+      "security": {
+        "description": "加密方式",
+        "type": "string",
+        "options": [
+          "ssl",
+          "starttls",
+          "none"
+        ],
+        "labels": [
+          "SSL",
+          "STARTTLS",
+          "不加密"
+        ],
+        "default": "ssl"
+      },
+      "username": {
+        "description": "登录用户名",
+        "type": "string",
+        "default": ""
+      },
+      "password": {
+        "description": "登录密码 / 授权码",
+        "type": "string",
+        "default": "",
+        "secret": true
+      },
+      "from_addr": {
+        "description": "发件人（留空则用用户名）",
+        "type": "string",
+        "default": ""
+      },
+      "to_addrs": {
+        "description": "收件人列表",
+        "type": "list",
+        "default": []
+      }
     }
+  },
+  "auto_detect": {
+    "description": "自动识别协议端路径",
+    "type": "bool",
+    "default": true,
+    "hint": "开启后，日志/二维码/WebUI 路径留空时，插件会自动扫描协议端进程与常见安装目录并回填。"
+  },
+  "qr_fresh_seconds": {
+    "description": "二维码新鲜窗口（秒）",
+    "type": "int",
+    "default": 300,
+    "hint": "协议端登录成功后不会删除二维码文件，因此用 mtime 判断：在此窗口内更新过就认为「正在等待扫码」。"
   }
 }

@@ -2,6 +2,8 @@
 from __future__ import annotations
 
 import asyncio
+import os
+import time
 from pathlib import Path
 
 from core.config import InstanceConfig
@@ -70,6 +72,9 @@ def test_probe_manager_prefers_logfile(tmp_path: Path):
     instance = InstanceConfig(
         instance_id="i1", platform_id="nope", log_path=str(log), qr_path=str(qr)
     )
+    # 把二维码文件改成“过期”，此时结论应来自日志探测
+    stale = time.time() - 3600
+    os.utime(qr, (stale, stale))
     manager = ProbeManager(None)
     result = asyncio.run(manager.probe(instance))
     assert result.state is LoginState.NEED_LOGIN

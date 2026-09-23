@@ -197,9 +197,23 @@ class LogFileProbe:
 
 
 class QrFileProbe:
-    """读取二维码图片路径与指纹（不判断状态）。"""
+    """读取二维码图片。
+
+    协议端登录成功后**不会删除**二维码文件（实测 NapCat），因此用文件 mtime
+    判断「当前是否在等待扫码」：新鲜 -> NEED_LOGIN，过期 -> 不表态。
+    """
 
     name = "qrfile"
+
+    def __init__(self, fresh_seconds: int = 300) -> None:
+        self.fresh_seconds = max(30, int(fresh_seconds))
+
+    @staticmethod
+    def _age_seconds(path: Path) -> int | None:
+        try:
+            return int(time.time() - path.stat().st_mtime)
+        except OSError:
+            return None
 
     async def probe(self, instance: InstanceConfig) -> ProbeResult:
         result = ProbeResult(
@@ -211,10 +225,17 @@ class QrFileProbe:
         if not instance.qr_path:
             return result
         path = Path(instance.qr_path)
-        if not path.is_file():
+        try:
+            if not path.is_file():
+                return result
+        except OSError:
             return result
         result.qr_path = str(path)
         result.qr_hash = await asyncio.to_thread(qr_hash_of, path, "")
+        age = await asyncio.to_thread(self._age_seconds, path)
+        if age is not None and age <= self.fresh_seconds:
+            result.state = LoginState.NEED_LOGIN
+            result.detail = f"二维码文件 {age} 秒前更新，疑似等待扫码"
         return result
 
 
@@ -286,26 +307,39 @@ class HttpProbe:
 class ProbeManager:
     """按实例组合探测源，输出统一的 ProbeResult。"""
 
-    def __init__(self, context: Any, *, log_tail_bytes: int = 65536) -> None:
+    def __init__(
+        self,
+        context: Any,
+        *,
+        log_tail_bytes: int = 65536,
+        qr_fresh_seconds: int = 300,
+    ) -> None:
         self.astrbot = AstrBotProbe(context)
         self.logfile = LogFileProbe(max_bytes=log_tail_bytes)
-        self.qrfile = QrFileProbe()
+        self.qrfile = QrFileProbe(fresh_seconds=qr_fresh_seconds)
         self.http = HttpProbe()
 
     async def probe(self, instance: InstanceConfig) -> ProbeResult:
         log_result = await self.logfile.probe(instance)
         http_result = await self.http.probe(instance)
         astrbot_result = await self.astrbot.probe(instance)
+        qr_result = await self.qrfile.probe(instance)
 
         state = LoginState.UNKNOWN
         source = ""
         detail = ""
-        for candidate in (log_result, http_result, astrbot_result):
-            if candidate.state in (LoginState.NEED_LOGIN, LoginState.ONLINE, LoginState.OFFLINE):
-                state = candidate.state
-                source = candidate.source
-                detail = candidate.detail
-                break
+        if qr_result.state is LoginState.NEED_LOGIN:
+            # 二维码刚刚刷新 = 协议端正在等扫码，这是最强信号，优先采信
+            state = qr_result.state
+            source = qr_result.source
+            detail = qr_result.detail
+        else:
+            for candidate in (log_result, http_result, astrbot_result):
+                if candidate.state in (LoginState.NEED_LOGIN, LoginState.ONLINE, LoginState.OFFLINE):
+                    state = candidate.state
+                    source = candidate.source
+                    detail = candidate.detail
+                    break
 
         if state is LoginState.UNKNOWN:
             details = [
@@ -321,7 +355,6 @@ class ProbeManager:
                 ts=now_ts(),
             )
 
-        qr_result = await self.qrfile.probe(instance)
         qr_path = qr_result.qr_path
         qr_url = log_result.qr_url or http_result.qr_url
         qr_hash = qr_result.qr_hash or qr_hash_of("", qr_url)

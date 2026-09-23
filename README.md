@@ -143,3 +143,21 @@ MIT License，见 `LICENSE`。
   2. AstrBot 会话库里已有的记录。
 - 选项由插件在运行时注入，新增平台/新会话后刷新配置页即可看到（无需重启）。
 - 需要手填时，仍可直接编辑 `data/config/astrbot_plugin_onebot_login_guard_config.json`。
+
+
+## 🔍 路径自动识别
+
+**日志路径、二维码路径、WebUI 地址都可以留空**——插件会自己找：
+
+- 扫描本机协议端进程（读 `/proc` 的可执行文件与工作目录），按 NapCat / Lagrange / go-cqhttp 的已知目录结构探测；
+- 找不到进程时，回退搜索常见安装目录（`/root/Napcat`、`/opt/NapCat` 等）；
+- NapCat 的 WebUI 地址与 token 直接从 `resources/app/napcat/config/webui.json` 读取；
+- 启动时自动回填**空字段**（不覆盖你手填的内容），也可随时手动触发：
+  - 指令：`登录守护识别`（管理员）
+  - 状态页按钮：**自动识别协议端**
+  - 接口：`GET /discover`、`POST /apply_discovery`
+
+> **二维码文件是判断「需要登录」的最强信号。** 实测 NapCat 登录成功后不会删除
+> `cache/qrcode.png`，所以插件按 **mtime** 判断：在 `qr_fresh_seconds`（默认 300 秒）
+> 内更新过，就认为协议端正在等你扫码。因此 **NapCat 默认关闭文件日志也没关系**，
+> 只配 `qr_path`（自动识别即可）就能发现掉登录。

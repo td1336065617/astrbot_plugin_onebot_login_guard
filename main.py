@@ -1,6 +1,7 @@
 """OneBot 登录守护：NapCat / Lagrange 掉登录时自动把二维码推给你。"""
 from __future__ import annotations
 
+import asyncio
 import sys
 import time
 from pathlib import Path
@@ -13,6 +14,7 @@ from astrbot.api import logger
 from astrbot.api.event import AstrMessageEvent, filter
 from astrbot.api.star import Context, Star, StarTools
 
+from .core.autodetect import discover
 from .core.config import parse_settings
 from .core.guard import Guard
 from .core.schema_options import (
@@ -98,8 +100,53 @@ class OneBotLoginGuardPlugin(Star):
         del self._observed_umos[:-200]
         await self._refresh_schema_options()
 
+    async def apply_auto_detect(self, *, force: bool = False) -> dict:
+        """自动识别协议端路径并回填配置（默认只填空字段）。"""
+        discovery = await asyncio.to_thread(discover)
+        data = discovery.to_dict()
+        raw = self._config_obj.get("instances")
+        changed = False
+        if isinstance(raw, list):
+            for item in raw:
+                if not isinstance(item, dict):
+                    continue
+                if discovery.qr_path and (force or not str(item.get("qr_path") or "").strip()):
+                    item["qr_path"] = discovery.qr_path
+                    changed = True
+                if discovery.log_path and (force or not str(item.get("log_path") or "").strip()):
+                    item["log_path"] = discovery.log_path
+                    changed = True
+                if discovery.http_url and (force or not str(item.get("http_url") or "").strip()):
+                    item["http_url"] = discovery.http_url
+                    if discovery.http_token:
+                        item["http_token"] = discovery.http_token
+                    changed = True
+        if changed:
+            try:
+                self._config_obj.save_config()
+            except Exception as exc:
+                self.logger.warning("OneBot 登录守护：写回自动识别结果失败：%s", exc)
+            fresh = parse_settings(self._config_obj)
+            by_id = {entry.instance_id: entry for entry in fresh.instances}
+            for entry in self.settings.instances:
+                source = by_id.get(entry.instance_id)
+                if source is None:
+                    continue
+                entry.log_path = source.log_path
+                entry.qr_path = source.qr_path
+                entry.http_url = source.http_url
+                entry.http_token = source.http_token
+            self.logger.info(
+                "OneBot 登录守护：自动识别到 qr_path=%s log_path=%s",
+                discovery.qr_path or "（无）",
+                discovery.log_path or "（无）",
+            )
+        return data
+
     async def initialize(self) -> None:
         self._normalize_instances()
+        if self.settings.auto_detect:
+            await self.apply_auto_detect()
         await self._refresh_schema_options(force_db=True)
         await self.guard.start()
         self.logger.info(
@@ -140,6 +187,24 @@ class OneBotLoginGuardPlugin(Star):
             yield event.plain_result("当前没有可发送的二维码。")
             return
         yield event.plain_result("已重新推送二维码到所有通知渠道。")
+
+    @filter.permission_type(filter.PermissionType.ADMIN)
+    @filter.command("登录守护识别")
+    async def cmd_discover(self, event: AstrMessageEvent):
+        """自动识别协议端路径并回填（仅管理员）。"""
+        data = await self.apply_auto_detect()
+        lines = ["🔍 协议端路径自动识别"]
+        if data.get("endpoints"):
+            for item in data["endpoints"]:
+                lines.append("• 进程：{} (pid {})".format(item.get("kind"), item.get("pid")))
+        else:
+            lines.append("• 未发现协议端进程")
+        lines.append("• 二维码：{}".format(data.get("qr_path") or "未找到"))
+        lines.append("• 日志：{}".format(data.get("log_path") or "未找到"))
+        lines.append("• WebUI：{}".format(data.get("http_url") or "未找到"))
+        for note in data.get("notes") or []:
+            lines.append("· " + str(note))
+        yield event.plain_result(chr(10).join(lines))
 
     @filter.permission_type(filter.PermissionType.ADMIN)
     @filter.command("登录守护测试")

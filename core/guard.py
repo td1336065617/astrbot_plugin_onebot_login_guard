@@ -30,7 +30,9 @@ class Guard:
         self.data_dir = Path(data_dir)
         self.logger = logger
         self.probe_manager = ProbeManager(
-            context, log_tail_bytes=settings.log_tail_bytes
+            context,
+            log_tail_bytes=settings.log_tail_bytes,
+            qr_fresh_seconds=settings.qr_fresh_seconds,
         )
         self.notifiers = build_notifiers(settings, context, logger=logger)
         self.store = EventStore(

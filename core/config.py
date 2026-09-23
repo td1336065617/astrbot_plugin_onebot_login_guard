@@ -97,6 +97,8 @@ class GuardSettings:
     qr_refresh_notify: bool = True
     send_qr_image: bool = True
     send_qr_url: bool = True
+    auto_detect: bool = True
+    qr_fresh_seconds: int = 300
     max_events: int = 200
     log_tail_bytes: int = 65536
     instances: list[InstanceConfig] = field(default_factory=list)
@@ -226,6 +228,8 @@ def parse_settings(raw: dict | None) -> GuardSettings:
         qr_refresh_notify=_as_bool(raw.get("qr_refresh_notify"), True),
         send_qr_image=_as_bool(raw.get("send_qr_image"), True),
         send_qr_url=_as_bool(raw.get("send_qr_url"), True),
+        auto_detect=_as_bool(raw.get("auto_detect"), True),
+        qr_fresh_seconds=_as_int(raw.get("qr_fresh_seconds"), 300, 30, 3600),
         max_events=_as_int(raw.get("max_events"), 200, 10, 5000),
         log_tail_bytes=_as_int(raw.get("log_tail_bytes"), 65536, 4096, 1048576),
         instances=instances,

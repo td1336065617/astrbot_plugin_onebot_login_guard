@@ -73,6 +73,17 @@ def register_web_apis(plugin: Any) -> None:
                     )
         return error_response("当前没有二维码")
 
+    async def discover_handler():
+        data = await plugin.apply_auto_detect(force=False)
+        return json_response({"status": "success", "data": data})
+
+    async def apply_discovery_handler():
+        payload = await request.json(default=None)
+        payload = payload if isinstance(payload, dict) else {}
+        force = bool(payload.get("force"))
+        data = await plugin.apply_auto_detect(force=force)
+        return json_response({"status": "success", "data": data})
+
     routes = (
         ("/status", status_handler, ["GET"], "登录守护状态"),
         ("/probe", probe_handler, ["POST"], "立即探测一次"),
@@ -81,6 +92,8 @@ def register_web_apis(plugin: Any) -> None:
         ("/events", events_handler, ["GET"], "最近事件"),
         ("/qr", qr_handler, ["GET"], "当前二维码图片"),
         ("/qr_data", qr_data_handler, ["GET"], "当前二维码（data URL）"),
+        ("/discover", discover_handler, ["GET"], "自动识别协议端路径"),
+        ("/apply_discovery", apply_discovery_handler, ["POST"], "应用自动识别结果"),
     )
     for suffix, handler, methods, desc in routes:
         context.register_web_api(
