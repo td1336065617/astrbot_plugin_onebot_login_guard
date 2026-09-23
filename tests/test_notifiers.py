@@ -72,3 +72,15 @@ def test_email_message_build(tmp_path):
     assert message["Subject"].startswith("OneBot 登录守护")
     assert message["To"] == "a@example.com"
     assert message.is_multipart()
+
+
+def test_render_text_need_login_with_stale_qr():
+    text = render_text(make_event(qr_stale=True), qr_url="")
+    assert "过期" in text
+    assert "重新发起登录" in text
+
+
+def test_render_text_qr_expired():
+    text = render_text(make_event(kind="qr_expired", qr_stale=True), qr_url="")
+    assert "二维码已经过期" in text
+    assert "重新发起登录" in text

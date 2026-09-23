@@ -118,6 +118,7 @@ class Guard:
         status.unknown_streak = 0
 
         prev = status.state  # 已确认状态
+        prev_qr_stale = status.qr_stale
         new = result.state
 
         status.qr_stale = result.stale
@@ -140,17 +141,23 @@ class Guard:
         confirmed = status.state
         if new == LoginState.OFFLINE:
             status.offline_streak += 1
+            if confirmed != LoginState.OFFLINE:
+                # 状态立即反映事实（状态页与判定保持一致），只有通知需要抖动确认
+                status.state = LoginState.OFFLINE
+                status.last_change_ts = result.ts
+                status.offline_notified = False
             if (
-                confirmed != LoginState.OFFLINE
+                not status.offline_notified
                 and status.offline_streak >= self.settings.offline_confirm_rounds
             ):
+                status.offline_notified = True
                 events.append(
                     GuardEvent("offline", instance.instance_id, new, ts=result.ts)
                 )
-                status.state = LoginState.OFFLINE
-                status.last_change_ts = result.ts
         else:
             status.offline_streak = 0
+            status.offline_notified = False
+            qr_stale = bool(result.stale)
             if new == LoginState.NEED_LOGIN:
                 if prev != LoginState.NEED_LOGIN:
                     events.append(
@@ -161,6 +168,7 @@ class Guard:
                             qr_path=qr_path,
                             qr_url=qr_url,
                             qr_hash=qr_hash,
+                            qr_stale=qr_stale,
                             ts=result.ts,
                         )
                     )
@@ -177,6 +185,21 @@ class Guard:
                             qr_path=qr_path,
                             qr_url=qr_url,
                             qr_hash=qr_hash,
+                            qr_stale=qr_stale,
+                            ts=result.ts,
+                        )
+                    )
+                elif qr_stale and not prev_qr_stale:
+                    # 二维码从「新鲜」变「过期」：协议端不再刷新，得提醒用户手动触发
+                    events.append(
+                        GuardEvent(
+                            "qr_expired",
+                            instance.instance_id,
+                            new,
+                            qr_path="",
+                            qr_url="",
+                            qr_hash=qr_hash,
+                            qr_stale=True,
                             ts=result.ts,
                         )
                     )

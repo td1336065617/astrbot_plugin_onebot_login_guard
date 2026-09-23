@@ -29,7 +29,14 @@ def render_text(event: GuardEvent, *, qr_url: str = "", instance_label: str = ""
         "时间：" + time.strftime("%Y-%m-%d %H:%M:%S", time.localtime(event.ts or now_ts())),
     ]
     if event.kind == "need_login":
-        lines.append("请在二维码过期前用手机 QQ 扫描下方二维码完成登录。")
+        if event.qr_stale:
+            lines.append("⚠️ 协议端在等待扫码，但它手上那张二维码已经过期（协议端不再自动刷新）。")
+            lines.append("请到协议端 WebUI 重新发起登录，或重启协议端服务；新二维码生成后会立刻推送。")
+        else:
+            lines.append("请在二维码过期前用手机 QQ 扫描下方二维码完成登录。")
+    elif event.kind == "qr_expired":
+        lines.append("⚠️ 二维码已经过期，且协议端不再自动刷新。")
+        lines.append("请到协议端 WebUI 重新发起登录，或重启协议端服务；新二维码生成后会立刻推送。")
     elif event.kind == "offline":
         lines.append("协议端反向 WebSocket 已断开，请检查 NapCat/Lagrange 进程与网络。")
     elif event.kind == "recovered":

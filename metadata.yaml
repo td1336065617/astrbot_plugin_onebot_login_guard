@@ -6,7 +6,7 @@ desc: |
   持续探测协议端登录状态，一旦掉线或需要重新扫码，立即把二维码与解码链接推送到
   AstrBot 会话、企业微信 / 钉钉 / 飞书 / Telegram / 通用 Webhook 或邮件；
   扫码恢复后再通知一次，形成闭环。支持多协议端多账号，每实例独立状态与冷却。
-version: 0.1.4
+version: 0.1.5
 author: td1336065617
 repo: https://github.com/td1336065617/astrbot_plugin_onebot_login_guard
 astrbot_version: ">=4.13,<5"

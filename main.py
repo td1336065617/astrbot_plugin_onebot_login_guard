@@ -17,6 +17,7 @@ from astrbot.api.star import Context, Star, StarTools
 from .core.autodetect import discover
 from .core.config import parse_settings
 from .core.guard import Guard
+from .core.models import LoginState
 from .core.schema_options import (
     TEMPLATE_KEY,
     collect_db_sessions,
@@ -184,10 +185,7 @@ class OneBotLoginGuardPlugin(Star):
         """重发当前二维码（仅管理员）。"""
         sent = await self.guard.resend_qr()
         if not sent:
-            yield event.plain_result(
-                "当前没有有效的二维码：可能已恢复登录，或协议端那张二维码已经过期。"
-                "协议端刷新二维码后会自动推送给你，也可以发「登录守护状态」看当前判定。"
-            )
+            yield event.plain_result(self._qr_hint())
             return
         yield event.plain_result(
             "已按协议端最新状态重新探测并推送二维码到所有通知渠道。"
@@ -210,6 +208,24 @@ class OneBotLoginGuardPlugin(Star):
         for note in data.get("notes") or []:
             lines.append("· " + str(note))
         yield event.plain_result(chr(10).join(lines))
+
+    def _qr_hint(self) -> str:
+        """根据当前状态给出可执行的提示。"""
+        for status in self.guard.statuses.values():
+            if status.state is LoginState.NEED_LOGIN:
+                if status.qr_stale:
+                    return (
+                        "协议端正在等待扫码，但它手上那张二维码已经过期（协议端不再自动刷新）。\n"
+                        "请在协议端 WebUI 重新发起登录，或重启协议端服务"
+                        "（如 systemctl restart napcat）；新二维码生成后会立刻推送给你。"
+                    )
+                return "协议端正在等待扫码，但暂时读不到二维码文件，请检查 qr_path 配置。"
+            if status.state is LoginState.OFFLINE:
+                return (
+                    "协议端进程不在运行，没有二维码可推。"
+                    "请先启动协议端（如 systemctl start napcat）。"
+                )
+        return "当前没有有效的二维码：可能已恢复登录。"
 
     @filter.permission_type(filter.PermissionType.ADMIN)
     @filter.command("登录守护测试")

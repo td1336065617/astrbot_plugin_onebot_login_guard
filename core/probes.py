@@ -12,6 +12,7 @@ import time
 from pathlib import Path
 from typing import Any, Protocol
 
+from .autodetect import scan_endpoints
 from .config import InstanceConfig
 from .models import LoginState, ProbeResult
 from .qr import extract_qr_url, qr_hash_of
@@ -331,6 +332,31 @@ class HttpProbe:
         )
 
 
+class ProcessProbe:
+    """协议端进程是否还在运行。
+
+    用于区分两种「反向 WS 没连上」：
+    - 进程在跑  -> 它是在等扫码登录（NapCat 掉登录后不会连 WS）
+    - 进程不在  -> 协议端挂了/没启动
+    """
+
+    name = "process"
+
+    def __init__(self, ttl_seconds: int = 10) -> None:
+        self.ttl_seconds = max(1, int(ttl_seconds))
+        self._cached_at = 0.0
+        self._cached = False
+
+    async def alive(self) -> bool:
+        now = time.time()
+        if now - self._cached_at < self.ttl_seconds:
+            return self._cached
+        endpoints = await asyncio.to_thread(scan_endpoints)
+        self._cached = bool(endpoints)
+        self._cached_at = now
+        return self._cached
+
+
 class ProbeManager:
     """按实例组合探测源，输出统一的 ProbeResult。"""
 
@@ -348,6 +374,7 @@ class ProbeManager:
         )
         self.qrfile = QrFileProbe(fresh_seconds=qr_fresh_seconds)
         self.http = HttpProbe()
+        self.process = ProcessProbe()
 
     async def probe(self, instance: InstanceConfig) -> ProbeResult:
         log_result = await self.logfile.probe(instance)
@@ -358,18 +385,34 @@ class ProbeManager:
         state = LoginState.UNKNOWN
         source = ""
         detail = ""
-        if qr_result.state is LoginState.NEED_LOGIN:
-            # 二维码刚刚刷新 = 协议端正在等扫码，这是最强信号，优先采信
-            state = qr_result.state
+        if astrbot_result.state is LoginState.ONLINE:
+            # 反向 WS 连上了 -> 一定已登录成功（协议端登录后才会连 WS）
+            state = LoginState.ONLINE
+            source = astrbot_result.source
+            detail = astrbot_result.detail
+        elif qr_result.state is LoginState.NEED_LOGIN:
+            # 二维码刚刚刷新 -> 正在等扫码
+            state = LoginState.NEED_LOGIN
             source = qr_result.source
             detail = qr_result.detail
-        else:
-            for candidate in (log_result, http_result, astrbot_result):
-                if candidate.state in (LoginState.NEED_LOGIN, LoginState.ONLINE, LoginState.OFFLINE):
-                    state = candidate.state
-                    source = candidate.source
-                    detail = candidate.detail
-                    break
+        elif astrbot_result.state is LoginState.OFFLINE:
+            # 反向 WS 没连上：进程还在 = 它在等扫码；进程没了 = 协议端挂了
+            if await self.process.alive():
+                state = LoginState.NEED_LOGIN
+                source = self.process.name
+                detail = "协议端进程在运行，但反向 WebSocket 未连接——通常表示正在等待扫码登录"
+            else:
+                state = LoginState.OFFLINE
+                source = astrbot_result.source
+                detail = astrbot_result.detail
+        elif log_result.state is not LoginState.UNKNOWN:
+            state = log_result.state
+            source = log_result.source
+            detail = log_result.detail
+        elif http_result.state is not LoginState.UNKNOWN:
+            state = http_result.state
+            source = http_result.source
+            detail = http_result.detail
 
         if state is LoginState.UNKNOWN:
             details = [
@@ -388,11 +431,14 @@ class ProbeManager:
         qr_path = qr_result.qr_path
         qr_url = log_result.qr_url or http_result.qr_url
         qr_hash = qr_result.qr_hash or qr_hash_of("", qr_url)
-        if state is LoginState.NEED_LOGIN and not qr_path and not qr_url:
-            detail = (detail + "；未找到二维码，请检查 qr_path / log_path 配置").strip("；")
-        if state is LoginState.NEED_LOGIN and qr_result.stale and qr_path:
-            # 判定要登录，但手上的二维码文件是过期的：明确标注，别当成可用二维码
-            detail = (detail + "；现有二维码文件已过期").strip("；")
+        stale = qr_result.stale
+        if state is LoginState.NEED_LOGIN:
+            if not qr_path and not qr_url:
+                detail = (detail + "；未找到二维码，请检查 qr_path / log_path 配置").strip("；")
+            elif stale and qr_path:
+                detail = (
+                    detail + "；现有二维码文件已过期，协议端已不再自动刷新"
+                ).strip("；")
         return ProbeResult(
             instance_id=instance.instance_id,
             state=state,
@@ -401,6 +447,6 @@ class ProbeManager:
             qr_path=qr_path,
             qr_url=qr_url,
             qr_hash=qr_hash,
-            stale=qr_result.stale,
+            stale=stale,
             ts=now_ts(),
         )

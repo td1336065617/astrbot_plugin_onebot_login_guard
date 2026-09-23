@@ -27,6 +27,7 @@ EVENT_LABELS: dict[str, str] = {
     "offline": "掉线",
     "recovered": "已恢复",
     "qr_refreshed": "二维码已刷新",
+    "qr_expired": "二维码已过期",
     "test": "测试通知",
 }
 
@@ -76,6 +77,9 @@ class GuardEvent:
     qr_path: str = ""
     qr_url: str = ""
     qr_hash: str = ""
+    qr_stale: bool = False
+    """二维码已过期：仍要告警，但不要再把这张死码当图片发出去。"""
+
     ts: int = 0
 
     @property
@@ -91,6 +95,7 @@ class GuardEvent:
             "qr_path": self.qr_path,
             "qr_url": self.qr_url,
             "qr_hash": self.qr_hash,
+            "qr_stale": self.qr_stale,
             "ts": self.ts,
         }
 
@@ -134,6 +139,7 @@ class InstanceStatus:
     offline_streak: int = 0
     unknown_streak: int = 0
     qr_stale: bool = False
+    offline_notified: bool = False
     events: list[dict[str, Any]] = field(default_factory=list)
 
     def to_dict(self) -> dict[str, Any]:
