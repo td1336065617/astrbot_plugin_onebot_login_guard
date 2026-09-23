@@ -183,13 +183,19 @@ class OneBotLoginGuardPlugin(Star):
     @filter.command("登录守护二维码")
     async def cmd_qr(self, event: AstrMessageEvent):
         """重发当前二维码（仅管理员）。"""
-        sent = await self.guard.resend_qr()
-        if not sent:
+        result = await self.guard.force_refresh_qr()
+        if not result["sent"]:
             yield event.plain_result(self._qr_hint())
             return
-        yield event.plain_result(
-            "已按协议端最新状态重新探测并推送二维码到所有通知渠道。"
-        )
+        if result["refreshed"]:
+            yield event.plain_result(
+                "已向协议端申请一张全新二维码，并推送到所有通知渠道。"
+            )
+        else:
+            yield event.plain_result(
+                "已推送当前二维码，但没能让协议端重新出码——"
+                "请检查协议端 WebUI 地址与 token（可用「登录守护识别」自动获取）。"
+            )
 
     @filter.permission_type(filter.PermissionType.ADMIN)
     @filter.command("登录守护刷新二维码")

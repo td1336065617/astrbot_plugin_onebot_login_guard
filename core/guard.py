@@ -328,14 +328,21 @@ class Guard:
             )
         return None
 
-    async def force_refresh_qr(self, instance_id: str | None = None) -> list[dict[str, Any]]:
-        """手动刷新二维码并推送（忽略冷却）。"""
+    async def force_refresh_qr(self, instance_id: str | None = None) -> dict[str, Any]:
+        """手动要码：每次都向协议端申请一张**全新**的二维码，再推送。
+
+        为什么不能只重发缓存里那张：扫码被驳回后旧码其实已经失效，但协议端
+        写下的文件 mtime 可能还很新，光看「新鲜度」分辨不出来。
+        """
+        refreshed = False
         for instance in self.settings.instances:
             if instance_id and instance.instance_id != instance_id:
                 continue
-            await self._refresh_qrcode(instance, force=True)
+            if await self._refresh_qrcode(instance, force=True) is not None:
+                refreshed = True
         await self.tick()
-        return await self.resend_qr(instance_id)
+        sent = await self.resend_qr(instance_id)
+        return {"sent": sent, "refreshed": refreshed}
 
     # ---------------- 去重 ----------------
     def _should_notify(

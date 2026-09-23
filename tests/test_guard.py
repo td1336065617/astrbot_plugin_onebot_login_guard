@@ -7,6 +7,7 @@ import time
 from core.config import GuardSettings, InstanceConfig
 from core.guard import Guard
 from core.models import LoginState, ProbeResult
+from core.probes import QrFileProbe
 
 
 def pr(
@@ -34,6 +35,7 @@ class FakeProbeManager:
     def __init__(self, results):
         self.results = list(results)
         self.index = 0
+        self.qrfile = QrFileProbe(fresh_seconds=300)
 
     async def probe(self, instance):
         if self.index < len(self.results):
@@ -180,3 +182,47 @@ def test_qr_refreshed_is_throttled_per_instance(tmp_path):
         asyncio.run(guard.tick())
     # 首次 need_login 会发；第一次 qr_refreshed 放行；后续被按实例节流
     assert notifier.sent == ["need_login", "qr_refreshed"]
+
+
+def test_force_refresh_qr_always_requests_new_code(tmp_path, monkeypatch):
+    """扫码被驳回后旧码已失效，所以「要码」必须向协议端申请新的，而不是重发缓存。"""
+    source = tmp_path / "qrcode.png"
+    source.write_bytes(b"OLD")
+    results = [pr(LoginState.NEED_LOGIN, qr_hash="h1", qr_path=str(source))]
+    guard, notifier = build_guard(tmp_path, results)
+    instance = guard.settings.instances[0]
+    instance.qr_path = str(source)
+    instance.http_url = "http://127.0.0.1:6099"
+    instance.http_token = "token"
+
+    calls = []
+
+    class _FakeNapCat:
+        def __init__(self, base_url, token, **kwargs):
+            self.base_url = base_url
+
+        async def refresh_qrcode(self):
+            calls.append(1)
+            source.write_bytes(b"BRAND-NEW-QR")
+            return "https://txz.qq.com/p?k=NEW"
+
+    monkeypatch.setattr("core.guard.NapCatWebUI", _FakeNapCat)
+
+    result = asyncio.run(guard.force_refresh_qr())
+    assert calls == [1]
+    assert result["refreshed"] is True
+    assert result["sent"]
+    assert notifier.qr_contents[-1] == b"BRAND-NEW-QR"
+
+
+def test_force_refresh_qr_falls_back_without_webui(tmp_path):
+    """没配 WebUI 时退回推送已有二维码，并如实报告没能刷新。"""
+    source = tmp_path / "qrcode.png"
+    source.write_bytes(b"OLD")
+    results = [pr(LoginState.NEED_LOGIN, qr_hash="h1", qr_path=str(source))]
+    guard, notifier = build_guard(tmp_path, results)
+
+    result = asyncio.run(guard.force_refresh_qr())
+    assert result["refreshed"] is False
+    assert result["sent"]
+    assert notifier.qr_contents[-1] == b"OLD"

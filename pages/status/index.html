@@ -36,7 +36,6 @@
 
   <div class="actions">
     <button id="btn-probe">立即探测</button>
-    <button id="btn-resend">重发二维码</button>
     <button id="btn-test">测试通知</button>
     <button id="btn-refresh-qr">刷新二维码</button>
     <button id="btn-discover">自动识别协议端</button>
@@ -138,12 +137,6 @@
   document.getElementById("btn-probe").onclick = function () {
     call("probe", "POST").then(refresh);
   };
-  document.getElementById("btn-resend").onclick = function () {
-    call("resend_qr", "POST").then(function (res) {
-      alert(res && res.status === "success" ? "已重发二维码" : "当前没有可发送的二维码");
-      refresh();
-    });
-  };
   document.getElementById("btn-test").onclick = function () {
     call("test_notify", "POST").then(function (res) {
       alert("已发送测试通知：" + (((res && res.data) || {}).channels || []).join("、"));
@@ -153,7 +146,13 @@
 
   document.getElementById("btn-refresh-qr").onclick = function () {
     call("refresh_qr", "POST", {}).then(function (res) {
-      alert(res && res.status === "success" ? "已请求协议端重新生成二维码并推送" : ((res && res.message) || "刷新失败"));
+      alert(
+        res && res.status === "success"
+          ? (res.data && res.data.refreshed
+              ? "已向协议端申请一张全新二维码并推送"
+              : "已推送当前二维码，但没能让协议端重新出码（检查 WebUI 地址与 token）")
+          : ((res && res.message) || "刷新失败")
+      );
       refresh();
     });
   };

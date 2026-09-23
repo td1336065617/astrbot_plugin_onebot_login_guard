@@ -88,10 +88,10 @@ def register_web_apis(plugin: Any) -> None:
         payload = await request.json(default=None)
         payload = payload if isinstance(payload, dict) else {}
         instance_id = str(payload.get("instance_id") or "").strip() or None
-        sent = await plugin.guard.force_refresh_qr(instance_id)
-        if not sent:
+        result = await plugin.guard.force_refresh_qr(instance_id)
+        if not result["sent"]:
             return error_response(plugin._qr_hint())
-        return json_response({"status": "success", "data": {"sent": sent}})
+        return json_response({"status": "success", "data": result})
 
     async def discover_handler():
         data = await plugin.apply_auto_detect(force=False)
