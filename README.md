@@ -56,6 +56,7 @@ AstrBot WebUI → 插件 → 插件市场 → 搜索「OneBot 登录守护」→
 - NapCat：日志 `/root/Napcat/logs/napcat.log`（或服务日志），二维码 `/root/Napcat/opt/QQ/resources/app/napcat/cache/qrcode.png`
 - Lagrange：日志与二维码路径按你的部署填写
 - go-cqhttp：日志 `logs/xx.log`
+- **Windows 示例**：日志 `C:\NapCat\logs\napcat.log`，二维码 `C:\NapCat\opt\QQ\resources\app\napcat\cache\qrcode.png`（按你的实际安装位置调整）
 
 ### 2. 通知渠道
 
