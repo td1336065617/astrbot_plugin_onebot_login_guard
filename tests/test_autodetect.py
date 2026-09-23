@@ -101,3 +101,28 @@ def test_discover_reports_missing_paths(tmp_path):
     assert result.qr_path == ""
     assert result.log_path == ""
     assert any("未找到二维码" in note for note in result.notes)
+
+
+def test_discover_skips_stale_log(tmp_path):
+    """崩溃留下的死日志不能被自动识别采用。"""
+    import os
+    import time
+
+    root, exe = _make_napcat(tmp_path)
+    stale = root / "napcat.log"
+    stale.write_text("请扫描下面的二维码\n", encoding="utf-8")
+    old = time.time() - 86400
+    os.utime(stale, (old, old))
+    proc = _make_proc(tmp_path, 1234, "/root/Napcat/opt/QQ/qq", exe, exe.parent)
+    result = discover(proc_root=str(proc), extra_roots=[str(root)])
+    assert result.log_path == ""
+    assert result.qr_path.endswith("qrcode.png")
+
+
+def test_discover_accepts_fresh_log(tmp_path):
+    root, exe = _make_napcat(tmp_path)
+    fresh = root / "napcat.log"
+    fresh.write_text("09-23 16:00:00 [info] running\n", encoding="utf-8")
+    proc = _make_proc(tmp_path, 1234, "/root/Napcat/opt/QQ/qq", exe, exe.parent)
+    result = discover(proc_root=str(proc), extra_roots=[str(root)])
+    assert result.log_path.endswith("napcat.log")

@@ -42,6 +42,9 @@ class ProbeResult:
     qr_path: str = ""
     qr_url: str = ""
     qr_hash: str = ""
+    stale: bool = False
+    """证据是否已过期（过期证据不得用于判定当前状态）。"""
+
     ts: int = 0
 
     @property
@@ -58,6 +61,7 @@ class ProbeResult:
             "qr_path": self.qr_path,
             "qr_url": self.qr_url,
             "qr_hash": self.qr_hash,
+            "stale": self.stale,
             "ts": self.ts,
         }
 
@@ -128,6 +132,8 @@ class InstanceStatus:
     last_probe_ts: int = 0
     last_change_ts: int = 0
     offline_streak: int = 0
+    unknown_streak: int = 0
+    qr_stale: bool = False
     events: list[dict[str, Any]] = field(default_factory=list)
 
     def to_dict(self) -> dict[str, Any]:
@@ -145,4 +151,6 @@ class InstanceStatus:
             "last_probe_ts": self.last_probe_ts,
             "last_change_ts": self.last_change_ts,
             "offline_streak": self.offline_streak,
+            "unknown_streak": self.unknown_streak,
+            "qr_stale": self.qr_stale,
         }

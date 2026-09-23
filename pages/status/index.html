@@ -84,6 +84,7 @@
         '<div class="row"><span class="name">' + item.instance_id + '</span>' +
         '<span class="badge ' + item.state + '">' + item.state_label + '</span></div>' +
         '<div class="detail">' + (item.detail || "—") + '</div>' +
+        (item.qr_stale ? '<div class="detail">⚠️ 二维码已过期，协议端刷新后会自动推送</div>' : "") +
         '<div class="detail">来源：' + (item.source || "—") +
         ' · 探测：' + fmtTime(item.last_probe_ts) + '</div>' +
         (item.qr_url ? '<div class="detail">解码链接：' + item.qr_url + '</div>' : "") +

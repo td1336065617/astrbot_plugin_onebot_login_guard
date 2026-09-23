@@ -185,7 +185,8 @@ class OneBotLoginGuardPlugin(Star):
         sent = await self.guard.resend_qr()
         if not sent:
             yield event.plain_result(
-                "当前不需要扫码（未处于「需要登录」状态），没有可推送的二维码。"
+                "当前没有有效的二维码：可能已恢复登录，或协议端那张二维码已经过期。"
+                "协议端刷新二维码后会自动推送给你，也可以发「登录守护状态」看当前判定。"
             )
             return
         yield event.plain_result(

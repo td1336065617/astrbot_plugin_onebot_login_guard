@@ -137,8 +137,16 @@ class LogFileProbe:
 
     name = "logfile"
 
-    def __init__(self, max_bytes: int = 65536) -> None:
+    def __init__(self, max_bytes: int = 65536, fresh_seconds: int = 900) -> None:
         self.max_bytes = max_bytes
+        self.fresh_seconds = max(60, int(fresh_seconds))
+
+    @staticmethod
+    def _age_seconds(path: Path) -> int | None:
+        try:
+            return int(time.time() - path.stat().st_mtime)
+        except OSError:
+            return None
 
     @staticmethod
     def _classify(instance: InstanceConfig, text: str) -> tuple[LoginState | None, str]:
@@ -174,6 +182,19 @@ class LogFileProbe:
                 state=LoginState.UNKNOWN,
                 source=self.name,
                 detail="未配置日志路径",
+                ts=now_ts(),
+            )
+        # 协议端在运行时会持续写日志；长时间没更新的日志说明它已经“死”了
+        # （例如上一次崩溃留下的文件），此时里面的「请扫描二维码」是历史记录，
+        # 绝不能拿来当作当前状态，否则会一直误报“需要登录”。
+        age = await asyncio.to_thread(self._age_seconds, path)
+        if age is not None and age > self.fresh_seconds:
+            return ProbeResult(
+                instance_id=instance.instance_id,
+                state=LoginState.UNKNOWN,
+                source=self.name,
+                detail=f"日志已 {age} 秒未更新，视为无效（可能不是当前运行实例的日志）",
+                stale=True,
                 ts=now_ts(),
             )
         text = await asyncio.to_thread(_tail_text, path, self.max_bytes)
@@ -236,6 +257,12 @@ class QrFileProbe:
         if age is not None and age <= self.fresh_seconds:
             result.state = LoginState.NEED_LOGIN
             result.detail = f"二维码文件 {age} 秒前更新，疑似等待扫码"
+        else:
+            # 文件还在，但已经过期：说明协议端此刻并没有在等你扫码
+            result.stale = True
+            result.detail = (
+                f"二维码文件已 {age} 秒未更新，早已过期" if age is not None else "无法读取二维码文件时间"
+            )
         return result
 
 
@@ -313,9 +340,12 @@ class ProbeManager:
         *,
         log_tail_bytes: int = 65536,
         qr_fresh_seconds: int = 300,
+        log_fresh_seconds: int = 900,
     ) -> None:
         self.astrbot = AstrBotProbe(context)
-        self.logfile = LogFileProbe(max_bytes=log_tail_bytes)
+        self.logfile = LogFileProbe(
+            max_bytes=log_tail_bytes, fresh_seconds=log_fresh_seconds
+        )
         self.qrfile = QrFileProbe(fresh_seconds=qr_fresh_seconds)
         self.http = HttpProbe()
 
@@ -360,6 +390,9 @@ class ProbeManager:
         qr_hash = qr_result.qr_hash or qr_hash_of("", qr_url)
         if state is LoginState.NEED_LOGIN and not qr_path and not qr_url:
             detail = (detail + "；未找到二维码，请检查 qr_path / log_path 配置").strip("；")
+        if state is LoginState.NEED_LOGIN and qr_result.stale and qr_path:
+            # 判定要登录，但手上的二维码文件是过期的：明确标注，别当成可用二维码
+            detail = (detail + "；现有二维码文件已过期").strip("；")
         return ProbeResult(
             instance_id=instance.instance_id,
             state=state,
@@ -368,5 +401,6 @@ class ProbeManager:
             qr_path=qr_path,
             qr_url=qr_url,
             qr_hash=qr_hash,
+            stale=qr_result.stale,
             ts=now_ts(),
         )

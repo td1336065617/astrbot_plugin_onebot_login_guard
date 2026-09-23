@@ -9,7 +9,14 @@ from core.guard import Guard
 from core.models import LoginState, ProbeResult
 
 
-def pr(state: LoginState, *, qr_hash: str = "", qr_url: str = "", qr_path: str = "") -> ProbeResult:
+def pr(
+    state: LoginState,
+    *,
+    qr_hash: str = "",
+    qr_url: str = "",
+    qr_path: str = "",
+    stale: bool = False,
+) -> ProbeResult:
     return ProbeResult(
         instance_id="i1",
         state=state,
@@ -18,6 +25,7 @@ def pr(state: LoginState, *, qr_hash: str = "", qr_url: str = "", qr_path: str =
         qr_path=qr_path,
         qr_url=qr_url,
         qr_hash=qr_hash,
+        stale=stale,
         ts=int(time.time()),
     )
 

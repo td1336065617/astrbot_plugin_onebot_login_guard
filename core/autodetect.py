@@ -230,11 +230,31 @@ def _pick_newest(paths: list[Path]) -> Path | None:
     return best
 
 
-def _search(kind: str, roots: list[str], patterns: tuple[str, ...]) -> Path | None:
+#: 自动识别时，日志文件必须在这么久内更新过，否则视为「死日志」不采用
+LOG_MAX_AGE_SECONDS = 3600
+
+
+def _search(
+    kind: str,
+    roots: list[str],
+    patterns: tuple[str, ...],
+    *,
+    max_age: int | None = None,
+) -> Path | None:
     found: list[Path] = []
     for root in roots:
         for pattern in patterns:
             found.extend(_iter_matches(root, pattern))
+    if max_age is not None and found:
+        now = time.time()
+        fresh: list[Path] = []
+        for path in found:
+            try:
+                if now - path.stat().st_mtime <= max_age:
+                    fresh.append(path)
+            except OSError:
+                continue
+        found = fresh
     return _pick_newest(found)
 
 
@@ -288,7 +308,10 @@ def discover(*, proc_root: str = "/proc", extra_roots: list[str] | None = None) 
             if qr is not None:
                 result.qr_path = str(qr)
         if not result.log_path:
-            log = _search(kind, roots, LOG_CANDIDATES.get(kind, ()))
+            # 只接受「还在更新」的日志：上一次崩溃留下的死文件会被误判成当前状态
+            log = _search(
+                kind, roots, LOG_CANDIDATES.get(kind, ()), max_age=LOG_MAX_AGE_SECONDS
+            )
             if log is not None:
                 result.log_path = str(log)
 
@@ -303,11 +326,24 @@ def discover(*, proc_root: str = "/proc", extra_roots: list[str] | None = None) 
     if not result.qr_path:
         result.notes.append("未找到二维码图片，请在协议端配置里确认路径后手填。")
     if not result.log_path:
-        result.notes.append("未找到日志文件（NapCat 默认关闭文件日志）；仅靠二维码文件也能判断是否需要登录。")
+        result.notes.append(
+            "未找到「仍在更新」的日志文件（NapCat 默认关闭文件日志，或只有崩溃留下的死日志）；"
+            "仅靠二维码文件也能判断是否需要登录，无需强求日志。"
+        )
     if result.qr_path:
         try:
             age = int(time.time() - Path(result.qr_path).stat().st_mtime)
             result.notes.append(f"二维码文件最后更新于 {age} 秒前。")
         except OSError:
             pass
+    if result.log_path:
+        try:
+            age = int(time.time() - Path(result.log_path).stat().st_mtime)
+        except OSError:
+            age = 0
+        if age > 3600:
+            result.notes.append(
+                f"⚠️ 找到的日志已 {age // 3600} 小时未更新，可能不是当前运行实例的日志"
+                "（该文件会被判为无效，不影响二维码判定）。"
+            )
     return result

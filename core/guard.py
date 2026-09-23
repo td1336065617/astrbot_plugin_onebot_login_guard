@@ -33,6 +33,7 @@ class Guard:
             context,
             log_tail_bytes=settings.log_tail_bytes,
             qr_fresh_seconds=settings.qr_fresh_seconds,
+            log_fresh_seconds=settings.log_fresh_seconds,
         )
         self.notifiers = build_notifiers(settings, context, logger=logger)
         self.store = EventStore(
@@ -94,18 +95,44 @@ class Guard:
         status.source = result.source
         status.detail = result.detail
         if result.state == LoginState.UNKNOWN:
+            status.unknown_streak += 1
+            if (
+                status.state is not LoginState.UNKNOWN
+                and status.unknown_streak >= self.settings.unknown_confirm_rounds
+            ):
+                # 连续多轮拿不到有效证据时不能再保留旧状态，否则一个错误的
+                # 「需要登录」会永远推那张早已过期的二维码。
+                status.state = LoginState.UNKNOWN
+                status.last_change_ts = result.ts
+                status.qr_path = ""
+                status.qr_url = ""
+                status.qr_hash = ""
+                status.qr_stale = False
+                if self.logger is not None:
+                    self.logger.info(
+                        "登录守护：实例 %s 连续 %d 轮无法判定，状态置为未知",
+                        instance.instance_id,
+                        status.unknown_streak,
+                    )
             return
+        status.unknown_streak = 0
 
         prev = status.state  # 已确认状态
         new = result.state
 
+        status.qr_stale = result.stale
         qr_path = result.qr_path
         if qr_path:
-            # 记录协议端的原始路径，另存一份快照用于发送（防止文件被清理）
+            # 记录协议端的原始路径，WebUI 可直接读实时文件
             status.qr_source_path = qr_path
+        if qr_path and not result.stale:
+            # 只有新鲜的二维码才另存快照用于发送（防止文件被清理）
             copied = copy_qr(qr_path, self.data_dir / "qr")
             if copied:
                 qr_path = copied
+        else:
+            # 过期二维码不发出去——推一张死码没有意义
+            qr_path = ""
         qr_url = result.qr_url if self.settings.send_qr_url else ""
         qr_hash = result.qr_hash
 
@@ -265,6 +292,9 @@ class Guard:
                 continue
             status = self.statuses.get(instance.instance_id)
             if status is None or status.state is not LoginState.NEED_LOGIN:
+                continue
+            if status.qr_stale:
+                # 手上的二维码已经过期，等协议端刷新后会自动推送
                 continue
             if not (status.qr_path or status.qr_url):
                 continue
