@@ -47,30 +47,41 @@ def register_web_apis(plugin: Any) -> None:
             {"status": "success", "data": {"events": plugin.guard.store.events(limit)}}
         )
 
-    async def qr_handler():
+    def _live_qr_path() -> str:
+        """优先返回协议端的实时二维码文件，其次才是快照副本。"""
         for item in plugin.guard.statuses.values():
-            path = getattr(item, "qr_path", "")
-            if path and Path(path).is_file():
-                return file_response(str(path))
+            for attr in ("qr_source_path", "qr_path"):
+                path = getattr(item, attr, "")
+                if path and Path(path).is_file():
+                    return str(path)
+        return ""
+
+    async def qr_handler():
+        path = _live_qr_path()
+        if path:
+            return file_response(path)
         return error_response("当前没有二维码")
 
     async def qr_data_handler():
         from .qr import read_qr_file
 
         for item in plugin.guard.statuses.values():
-            path = getattr(item, "qr_path", "")
-            if path and Path(path).is_file():
+            for attr in ("qr_source_path", "qr_path"):
+                path = getattr(item, attr, "")
+                if not path or not Path(path).is_file():
+                    continue
                 body, _ = read_qr_file(path)
-                if body:
-                    return json_response(
-                        {
-                            "status": "success",
-                            "data": {
-                                "instance_id": item.instance_id,
-                                "data_url": "data:image/png;base64," + body,
-                            },
-                        }
-                    )
+                if not body:
+                    continue
+                return json_response(
+                    {
+                        "status": "success",
+                        "data": {
+                            "instance_id": item.instance_id,
+                            "data_url": "data:image/png;base64," + body,
+                        },
+                    }
+                )
         return error_response("当前没有二维码")
 
     async def discover_handler():

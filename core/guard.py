@@ -101,6 +101,8 @@ class Guard:
 
         qr_path = result.qr_path
         if qr_path:
+            # 记录协议端的原始路径，另存一份快照用于发送（防止文件被清理）
+            status.qr_source_path = qr_path
             copied = copy_qr(qr_path, self.data_dir / "qr")
             if copied:
                 qr_path = copied
@@ -250,12 +252,21 @@ class Guard:
         return items
 
     async def resend_qr(self, instance_id: str | None = None) -> list[dict[str, Any]]:
+        """重新推送二维码。
+
+        探测时会把二维码复制一份做快照（防止协议端清理文件），这份快照可能已经
+        过期，所以这里先重新探测一次，拿到协议端**当前**的二维码再发送；
+        并且只在确实处于「需要登录」时才发，避免推一张已经没用的旧码。
+        """
+        await self.tick()
         sent: list[dict[str, Any]] = []
         for instance in self.settings.instances:
             if instance_id and instance.instance_id != instance_id:
                 continue
             status = self.statuses.get(instance.instance_id)
-            if status is None or not (status.qr_path or status.qr_url):
+            if status is None or status.state is not LoginState.NEED_LOGIN:
+                continue
+            if not (status.qr_path or status.qr_url):
                 continue
             event = GuardEvent(
                 "need_login",

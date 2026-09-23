@@ -122,6 +122,7 @@ class InstanceStatus:
     source: str = ""
     detail: str = ""
     qr_path: str = ""
+    qr_source_path: str = ""
     qr_url: str = ""
     qr_hash: str = ""
     last_probe_ts: int = 0
@@ -137,6 +138,7 @@ class InstanceStatus:
             "source": self.source,
             "detail": self.detail,
             "qr_path": self.qr_path,
+            "qr_source_path": self.qr_source_path,
             "qr_url": self.qr_url,
             "qr_hash": self.qr_hash,
             "has_qr": bool(self.qr_path or self.qr_url),

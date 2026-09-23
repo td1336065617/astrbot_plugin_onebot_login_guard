@@ -184,9 +184,13 @@ class OneBotLoginGuardPlugin(Star):
         """重发当前二维码（仅管理员）。"""
         sent = await self.guard.resend_qr()
         if not sent:
-            yield event.plain_result("当前没有可发送的二维码。")
+            yield event.plain_result(
+                "当前不需要扫码（未处于「需要登录」状态），没有可推送的二维码。"
+            )
             return
-        yield event.plain_result("已重新推送二维码到所有通知渠道。")
+        yield event.plain_result(
+            "已按协议端最新状态重新探测并推送二维码到所有通知渠道。"
+        )
 
     @filter.permission_type(filter.PermissionType.ADMIN)
     @filter.command("登录守护识别")

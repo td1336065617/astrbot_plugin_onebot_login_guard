@@ -40,10 +40,20 @@ class FakeNotifier:
 
     def __init__(self):
         self.sent = []
+        self.qr_contents = []
 
     async def send(self, event, text):
         self.sent.append(event.kind)
+        self.qr_contents.append(_read_bytes(event.qr_path))
         return True
+
+
+def _read_bytes(path):
+    try:
+        with open(path, "rb") as handle:
+            return handle.read()
+    except (OSError, TypeError):
+        return b""
 
 
 def build_guard(tmp_path, results, **kwargs):
@@ -114,3 +124,34 @@ def test_resend_qr_and_test_notify(tmp_path):
     assert sent and notifier.sent == ["need_login"]
     asyncio.run(guard.test_notify())
     assert "test" in notifier.sent
+
+def test_resend_qr_sends_fresh_file(tmp_path):
+    """协议端刷新二维码后，重发指令必须发最新的那一张。"""
+    source = tmp_path / "qrcode.png"
+    source.write_bytes(b"OLD")
+    results = [pr(LoginState.NEED_LOGIN, qr_hash="h1", qr_path=str(source))]
+    guard, notifier = build_guard(tmp_path, results)
+    asyncio.run(guard.tick())
+    assert notifier.qr_contents[-1] == b"OLD"
+
+    # 协议端重新生成了二维码
+    source.write_bytes(b"NEW")
+    notifier.qr_contents.clear()
+    sent = asyncio.run(guard.resend_qr())
+    assert sent
+    assert notifier.qr_contents[-1] == b"NEW"
+
+
+def test_resend_qr_refuses_when_online(tmp_path):
+    """已经恢复登录时不应该再推旧二维码。"""
+    source = tmp_path / "qrcode.png"
+    source.write_bytes(b"OLD")
+    results = [
+        pr(LoginState.NEED_LOGIN, qr_hash="h1", qr_path=str(source)),
+        pr(LoginState.ONLINE),
+    ]
+    guard, _notifier = build_guard(tmp_path, results)
+    asyncio.run(guard.tick())
+    sent = asyncio.run(guard.resend_qr())
+    assert sent == []
+
