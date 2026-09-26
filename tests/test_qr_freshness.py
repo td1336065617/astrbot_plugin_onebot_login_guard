@@ -28,13 +28,18 @@ def test_fresh_qr_means_need_login(tmp_path: Path):
     assert "等待扫码" in result.detail
 
 
-def test_stale_qr_does_not_claim_need_login(tmp_path: Path):
+def test_stale_qr_claims_need_login_with_stale_flag(tmp_path: Path):
+    """A7 / BUG-041：过期二维码同样是「在等扫码」的信号（好让守护主动重新出码），
+
+    但必须带 stale=True —— 上层据此不发死码（见 test_stale_evidence 的两条用例）。
+    """
     qr = tmp_path / "qrcode.png"
     qr.write_bytes(b"png")
     _age(qr, 3600)
     instance = InstanceConfig(instance_id="i1", qr_path=str(qr))
     result = asyncio.run(QrFileProbe(fresh_seconds=300).probe(instance))
-    assert result.state is LoginState.UNKNOWN
+    assert result.state is LoginState.NEED_LOGIN
+    assert result.stale is True
     assert result.qr_path == str(qr)
 
 

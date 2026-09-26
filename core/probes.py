@@ -7,6 +7,7 @@
 from __future__ import annotations
 
 import asyncio
+import functools
 import re
 import time
 from pathlib import Path
@@ -15,6 +16,7 @@ from typing import Any, Protocol
 from .autodetect import scan_endpoints
 from .config import InstanceConfig
 from .models import LoginState, ProbeResult
+from .napcat_api import NapCatWebUI
 from .qr import extract_qr_url, qr_hash_of
 
 
@@ -89,6 +91,26 @@ class AstrBotProbe:
             return bool(api_clients) or bool(event_clients)
         return None
 
+    async def _liveness(self, instance: InstanceConfig, timeout: float = 5.0) -> bool | None:
+        """一次只读 API 往返，用来识破「集合非空但连接已死」的僵尸 WS。"""
+        getter = getattr(self.context, "get_platform_inst", None)
+        if not callable(getter):
+            return None
+        try:
+            platform = getter(instance.platform_id)
+        except Exception:
+            return None
+        bot = getattr(platform, "bot", None) if platform is not None else None
+        action = getattr(bot, "call_action", None)
+        if not callable(action) or isinstance(action, functools.partial):
+            # aiocqhttp 的 Api.__getattr__ 对未知属性返回 partial，不能拿它当证据
+            return None
+        try:
+            info = await asyncio.wait_for(action("get_login_info"), timeout=timeout)
+        except Exception:
+            return False
+        return isinstance(info, dict) and bool(info)
+
     async def probe(self, instance: InstanceConfig) -> ProbeResult:
         status = await asyncio.to_thread(self._platform_status, instance)
         if not status:
@@ -117,11 +139,26 @@ class AstrBotProbe:
                 ts=now_ts(),
             )
         if connected is True:
+            alive = await self._liveness(instance)
+            if alive is False:
+                # 客户端集合还在，但 API 已无响应：典型的「僵尸连接」
+                # （账号被踢下线后 AstrBot 侧不会立刻清掉集合，见 BUG-041）
+                return ProbeResult(
+                    instance_id=instance.instance_id,
+                    state=LoginState.OFFLINE,
+                    source=self.name,
+                    detail="反向 WebSocket 无响应（疑似僵尸连接）",
+                    ts=now_ts(),
+                )
             return ProbeResult(
                 instance_id=instance.instance_id,
                 state=LoginState.ONLINE,
                 source=self.name,
-                detail="反向 WebSocket 已连接",
+                detail=(
+                    "反向 WebSocket 已连接（get_login_info 往返正常）"
+                    if alive
+                    else "反向 WebSocket 已连接"
+                ),
                 ts=now_ts(),
             )
         return ProbeResult(
@@ -259,7 +296,9 @@ class QrFileProbe:
             result.state = LoginState.NEED_LOGIN
             result.detail = f"二维码文件 {age} 秒前更新，疑似等待扫码"
         else:
-            # 文件还在，但已经过期：说明协议端此刻并没有在等你扫码
+            # 文件还在但已过期：协议端此刻没在等扫码 —— 这本身也是「离线/等码」的强信号。
+            # 置 stale=True 让上层去触发「重新出一张」，同时保证不会把死码发出去。
+            result.state = LoginState.NEED_LOGIN
             result.stale = True
             result.detail = (
                 f"二维码文件已 {age} 秒未更新，早已过期" if age is not None else "无法读取二维码文件时间"
@@ -357,6 +396,58 @@ class ProcessProbe:
         return self._cached
 
 
+class ProtocolStatusProbe:
+    """协议端自报登录态（NapCat WebUI CheckLoginStatus）——最权威的判据。
+
+    实测（BUG-041）：账号被腾讯踢下线后，AstrBot 侧的反向 WS 客户端集合仍在，
+    仅凭「集合非空」会误判在线；协议端自己的接口能一眼看穿：
+        {"isLogin": false, "isOffline": true, "loginPhase": "waiting_qrcode", "coreReady": false}
+    """
+
+    name = "napcat-webui"
+
+    def __init__(self, timeout: float = 8.0) -> None:
+        self.timeout = timeout
+
+    async def probe(self, instance: InstanceConfig) -> ProbeResult:
+        result = ProbeResult(
+            instance_id=instance.instance_id,
+            state=LoginState.UNKNOWN,
+            source=self.name,
+            ts=now_ts(),
+        )
+        client = NapCatWebUI(instance.http_url or "", instance.http_token or "", timeout=self.timeout)
+        if not client.ready:
+            result.detail = "未配置 WebUI 地址/token"
+            return result
+        try:
+            data = await client.login_status()
+        except Exception as exc:
+            result.detail = "WebUI 查询失败：" + type(exc).__name__
+            return result
+        if not data:
+            result.detail = "WebUI 未返回登录态"
+            return result
+        phase = str(data.get("loginPhase") or "")
+        qr_url = str(data.get("qrcodeurl") or "")
+        if data.get("isLogin") is True:
+            result.state = LoginState.ONLINE
+            result.detail = "协议端自报已登录"
+            return result
+        if phase == "waiting_qrcode":
+            result.state = LoginState.NEED_LOGIN
+            result.detail = "协议端等待扫码"
+            result.qr_url = qr_url
+            return result
+        if data.get("isOffline"):
+            err = str(data.get("loginError") or "").strip()
+            result.state = LoginState.OFFLINE
+            result.detail = "协议端自报离线" + ("：" + err if err else "")
+            return result
+        result.detail = f"协议端状态无法判定（phase={phase or 'unknown'}）"
+        return result
+
+
 class ProbeManager:
     """按实例组合探测源，输出统一的 ProbeResult。"""
 
@@ -374,23 +465,30 @@ class ProbeManager:
         )
         self.qrfile = QrFileProbe(fresh_seconds=qr_fresh_seconds)
         self.http = HttpProbe()
+        self.protocol = ProtocolStatusProbe()
         self.process = ProcessProbe()
 
     async def probe(self, instance: InstanceConfig) -> ProbeResult:
+        protocol_result = await self.protocol.probe(instance)
+        astrbot_result = await self.astrbot.probe(instance)
         log_result = await self.logfile.probe(instance)
         http_result = await self.http.probe(instance)
-        astrbot_result = await self.astrbot.probe(instance)
         qr_result = await self.qrfile.probe(instance)
 
         state = LoginState.UNKNOWN
         source = ""
         detail = ""
-        if astrbot_result.state is LoginState.ONLINE:
-            # 反向 WS 连上了 -> 一定已登录成功（协议端登录后才会连 WS）
+        if protocol_result.state is not LoginState.UNKNOWN:
+            # 协议端自报最权威：能识破「僵尸 WS」导致的误判在线（BUG-041）
+            state = protocol_result.state
+            source = protocol_result.source
+            detail = protocol_result.detail
+        elif astrbot_result.state is LoginState.ONLINE:
+            # 反向 WS 活着（且 liveness 往返正常）-> 已登录成功
             state = LoginState.ONLINE
             source = astrbot_result.source
             detail = astrbot_result.detail
-        elif qr_result.state is LoginState.NEED_LOGIN:
+        elif qr_result.state is LoginState.NEED_LOGIN and not qr_result.stale:
             # 二维码刚刚刷新 -> 正在等扫码
             state = LoginState.NEED_LOGIN
             source = qr_result.source
@@ -413,11 +511,16 @@ class ProbeManager:
             state = http_result.state
             source = http_result.source
             detail = http_result.detail
+        elif qr_result.state is LoginState.NEED_LOGIN:
+            # 最后兜底：二维码文件存在但已过期 —— 按「正在等待扫码，需要重新出码」处理
+            state = LoginState.NEED_LOGIN
+            source = qr_result.source
+            detail = qr_result.detail
 
         if state is LoginState.UNKNOWN:
             details = [
                 item.detail
-                for item in (log_result, http_result, astrbot_result)
+                for item in (protocol_result, log_result, http_result, astrbot_result)
                 if item.detail
             ]
             return ProbeResult(
@@ -429,7 +532,7 @@ class ProbeManager:
             )
 
         qr_path = qr_result.qr_path
-        qr_url = log_result.qr_url or http_result.qr_url
+        qr_url = protocol_result.qr_url or log_result.qr_url or http_result.qr_url
         qr_hash = qr_result.qr_hash or qr_hash_of("", qr_url)
         stale = qr_result.stale
         if state is LoginState.NEED_LOGIN:

@@ -45,8 +45,12 @@ def test_fresh_log_is_used(tmp_path: Path):
     assert result.stale is False
 
 
-def test_dead_log_plus_stale_qr_is_unknown(tmp_path: Path):
-    """复现线上事故：死日志 + 过期二维码，不能判成「需要登录」。"""
+def test_dead_log_plus_stale_qr_need_login_but_stale(tmp_path: Path):
+    """死日志 + 过期二维码：死日志依旧不参与判定；
+
+    A7 / BUG-041 起，二维码过期也算「在等扫码」的信号（好让守护主动重新出码），
+    但必须带 stale=True，且下游不得把死码当有效码发出去。
+    """
     log = tmp_path / "napcat.log"
     log.write_text(NEED_LOGIN_LINE, encoding="utf-8")
     _age(log, 86400)
@@ -57,8 +61,11 @@ def test_dead_log_plus_stale_qr_is_unknown(tmp_path: Path):
         instance_id="i1", platform_id="nope", log_path=str(log), qr_path=str(qr)
     )
     manager = ProbeManager(None, qr_fresh_seconds=300, log_fresh_seconds=900)
+    assert asyncio.run(LogFileProbe(fresh_seconds=900).probe(instance)).state is LoginState.UNKNOWN
     result = asyncio.run(manager.probe(instance))
-    assert result.state is LoginState.UNKNOWN
+    assert result.state is LoginState.NEED_LOGIN
+    assert result.stale is True
+    assert result.source == "qrfile"
 
 
 def test_stale_qr_is_not_attached_to_notification(tmp_path: Path):
