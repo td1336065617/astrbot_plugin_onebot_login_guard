@@ -65,7 +65,17 @@ def register_web_apis(plugin: Any) -> None:
     async def qr_data_handler():
         from .qr import read_qr_file
 
+        # 可选 instance_id：多实例时取指定实例的二维码；不传则维持原有「取第一个可用」行为
+        wanted = ""
+        query = getattr(request, "query", None)
+        if query is not None:
+            try:
+                wanted = str(query.get("instance_id") or "").strip()
+            except Exception:  # noqa: BLE001 - query 形态异常时退回默认行为
+                wanted = ""
         for item in plugin.guard.statuses.values():
+            if wanted and str(getattr(item, "instance_id", "")) != wanted:
+                continue
             for attr in ("qr_source_path", "qr_path"):
                 path = getattr(item, attr, "")
                 if not path or not Path(path).is_file():

@@ -4,6 +4,7 @@
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1" />
 <title>OneBot 登录守护</title>
+<script src="/api/plugin/page/bridge-sdk.js"></script>
 <style>
   :root { color-scheme: light dark; }
   body { font-family: system-ui, -apple-system, "Segoe UI", "Noto Sans SC", sans-serif; margin: 0; padding: 24px; background: #f6f7f9; color: #1f2328; }
@@ -28,11 +29,14 @@
   th, td { text-align: left; padding: 8px 10px; border-bottom: 1px solid #f1f3f5; font-size: 13px; }
   th { background: #fafafa; color: #6b7280; font-weight: 500; }
   .muted { color: #9ca3af; }
+  #msg { margin: 0 0 12px; padding: 10px 12px; border-radius: 8px; background: #eef6ff; color: #1f4e79; font-size: 13px; white-space: pre-wrap; }
+  #msg.err { background: #fdecec; color: #8a1f1f; }
 </style>
 </head>
 <body>
   <h1>🔐 OneBot 登录守护</h1>
   <div class="sub" id="sub">正在加载…</div>
+  <div id="msg" hidden></div>
 
   <div class="actions">
     <button id="btn-probe">立即探测</button>
@@ -53,11 +57,34 @@
 (function () {
   var api = window.AstrBotPluginPage;
 
-  function call(path, method, body) {
+  function esc(value) {
+    return String(value === null || value === undefined ? "" : value)
+      .replace(/&/g, "&amp;")
+      .replace(/</g, "&lt;")
+      .replace(/>/g, "&gt;")
+      .replace(/"/g, "&quot;")
+      .replace(/'/g, "&#39;");
+  }
+
+  function show(text, ok) {
+    var box = document.getElementById("msg");
+    if (!box) return;
+    box.textContent = String(text || "");
+    box.className = ok ? "" : "err";
+    box.hidden = false;
+    clearTimeout(show._t);
+    show._t = setTimeout(function () { box.hidden = true; }, 6000);
+  }
+
+  function call(path, method, params, body) {
     if (api && typeof api.apiGet === "function") {
-      return method === "GET" ? api.apiGet(path) : api.apiPost(path, body || {});
+      return method === "GET" ? api.apiGet(path, params || {}) : api.apiPost(path, body || {});
     }
-    return fetch(path, {
+    var url = path;
+    if (method === "GET" && params && Object.keys(params).length) {
+      url += "?" + new URLSearchParams(params).toString();
+    }
+    return fetch(url, {
       method: method,
       headers: { "Content-Type": "application/json" },
       body: method === "GET" ? undefined : JSON.stringify(body || {}),
@@ -81,22 +108,28 @@
       var card = document.createElement("div");
       card.className = "card";
       card.innerHTML =
-        '<div class="row"><span class="name">' + item.instance_id + '</span>' +
-        '<span class="badge ' + item.state + '">' + item.state_label + '</span></div>' +
-        '<div class="detail">' + (item.detail || "—") + '</div>' +
+        '<div class="row"><span class="name">' + esc(item.instance_id) + '</span>' +
+        '<span class="badge ' + esc(item.state) + '">' + esc(item.state_label) + '</span></div>' +
+        '<div class="detail">' + esc(item.detail || "—") + '</div>' +
         (item.qr_stale ? '<div class="detail">⚠️ 二维码已过期，协议端刷新后会自动推送</div>' : "") +
-        '<div class="detail">来源：' + (item.source || "—") +
-        ' · 探测：' + fmtTime(item.last_probe_ts) + '</div>' +
-        (item.qr_url ? '<div class="detail">解码链接：' + item.qr_url + '</div>' : "") +
+        '<div class="detail">来源：' + esc(item.source || "—") +
+        ' · 探测：' + esc(fmtTime(item.last_probe_ts)) + '</div>' +
+        (item.qr_url ? '<div class="detail">解码链接：' + esc(item.qr_url) + '</div>' : "") +
         '<div class="qr"></div>';
       box.appendChild(card);
       if (item.has_qr) {
-        call("qr_data", "GET").then(function (res) {
-          var url = res && res.data && res.data.data_url;
-          if (url) {
-            card.querySelector(".qr").innerHTML = '<img src="' + url + '" alt="二维码" />';
-          }
-        });
+        call("qr_data", "GET", { instance_id: item.instance_id })
+          .then(function (res) {
+            var url = res && res.data_url;
+            if (!url) return;
+            var img = document.createElement("img");
+            img.src = url;
+            img.alt = "二维码";
+            card.querySelector(".qr").appendChild(img);
+          })
+          .catch(function () {
+            card.querySelector(".qr").textContent = "暂无可用二维码";
+          });
       }
     });
   }
@@ -115,17 +148,17 @@
       }).join("、") || "无渠道";
       var tr = document.createElement("tr");
       tr.innerHTML =
-        "<td>" + fmtTime(ev.ts) + "</td>" +
-        "<td>" + (ev.instance_id || "—") + "</td>" +
-        "<td>" + (ev.kind_label || ev.kind || "—") + "</td>" +
-        "<td>" + notes + "</td>";
+        "<td>" + esc(fmtTime(ev.ts)) + "</td>" +
+        "<td>" + esc(ev.instance_id || "—") + "</td>" +
+        "<td>" + esc(ev.kind_label || ev.kind || "—") + "</td>" +
+        "<td>" + esc(notes) + "</td>";
       body.appendChild(tr);
     });
   }
 
   function refresh() {
-    call("status", "GET").then(function (res) {
-      var data = (res && res.data) || {};
+    return call("status", "GET").then(function (res) {
+      var data = res || {};
       document.getElementById("sub").textContent =
         "轮询间隔 " + (data.poll_interval || "-") + "s · 渠道：" +
         ((data.channels || []).join("、") || "未配置");
@@ -135,50 +168,62 @@
   }
 
   document.getElementById("btn-probe").onclick = function () {
-    call("probe", "POST").then(refresh);
-  };
-  document.getElementById("btn-test").onclick = function () {
-    call("test_notify", "POST").then(function (res) {
-      alert("已发送测试通知：" + (((res && res.data) || {}).channels || []).join("、"));
-      refresh();
+    call("probe", "POST").then(refresh).catch(function (err) {
+      show("探测失败：" + (err && err.message ? err.message : err), false);
     });
+  };
+
+  document.getElementById("btn-test").onclick = function () {
+    call("test_notify", "POST")
+      .then(function (res) {
+        show("已发送测试通知：" + ((res && res.channels) || []).join("、"), true);
+        return refresh();
+      })
+      .catch(function (err) {
+        show("测试通知失败：" + (err && err.message ? err.message : err), false);
+      });
   };
 
   document.getElementById("btn-refresh-qr").onclick = function () {
-    call("refresh_qr", "POST", {}).then(function (res) {
-      alert(
-        res && res.status === "success"
-          ? (res.data && res.data.refreshed
-              ? "已向协议端申请一张全新二维码并推送"
-              : "已推送当前二维码，但没能让协议端重新出码（检查 WebUI 地址与 token）")
-          : ((res && res.message) || "刷新失败")
-      );
-      refresh();
-    });
+    call("refresh_qr", "POST", null, {})
+      .then(function (res) {
+        show(
+          res && res.refreshed
+            ? "已向协议端申请一张全新二维码并推送"
+            : "已推送当前二维码，但没能让协议端重新出码（检查 WebUI 地址与 token）",
+          !!(res && res.refreshed)
+        );
+        return refresh();
+      })
+      .catch(function (err) {
+        show("刷新失败：" + (err && err.message ? err.message : err), false);
+      });
   };
 
   document.getElementById("btn-discover").onclick = function () {
-    call("apply_discovery", "POST", {}).then(function (res) {
-      var d = (res && res.data) || {};
-      alert(
-        "二维码：" + (d.qr_path || "未找到") + "
-" +
-        "日志：" + (d.log_path || "未找到") + "
-" +
-        "WebUI：" + (d.http_url || "未找到") + "
-
-" +
-        ((d.notes || []).join("
-") || "")
-      );
-      refresh();
-    });
+    call("apply_discovery", "POST", null, {})
+      .then(function (res) {
+        var d = res || {};
+        var lines = [
+          "二维码：" + (d.qr_path || "未找到"),
+          "日志：" + (d.log_path || "未找到"),
+          "WebUI：" + (d.http_url || "未找到"),
+          "",
+        ].concat(d.notes || []);
+        show(lines.join("\n"), true);
+        return refresh();
+      })
+      .catch(function (err) {
+        show("自动识别失败：" + (err && err.message ? err.message : err), false);
+      });
   };
 
   if (api && typeof api.ready === "function") {
-    api.ready(refresh);
+    api.ready().then(refresh).catch(function (err) {
+      show("桥接初始化失败：" + (err && err.message ? err.message : err), false);
+    });
   } else {
-    refresh();
+    show("未检测到 AstrBot 插件页桥接（bridge-sdk），无法访问后端接口", false);
   }
 })();
 </script>
