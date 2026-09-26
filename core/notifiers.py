@@ -149,10 +149,17 @@ class WebhookNotifier:
         if kind == "feishu":
             return self.config.url, {"msg_type": "text", "content": {"text": text}}
         if kind == "telegram":
-            endpoint = self.config.url
-            if self.config.token and not endpoint.startswith("http"):
+            # README 的约定：url 填 chat_id、token 填 Bot Token（BUG-047 修复前 chat_id 会被清空）
+            chat_id = self.config.url
+            if chat_id.startswith("http"):
+                # 兼容另一种写法：url 直接给完整 API 地址，此时 token 当 chat_id 用
+                endpoint = chat_id
+                chat_id = self.config.token
+            elif self.config.token:
                 endpoint = "https://api.telegram.org/bot" + self.config.token + "/sendMessage"
-            return endpoint, {"chat_id": self.config.url if not endpoint.startswith("http") else "", "text": text}
+            else:
+                endpoint = ""
+            return endpoint, {"chat_id": chat_id, "text": text}
         return self.config.url, {
             "event": event.kind,
             "instance_id": event.instance_id,

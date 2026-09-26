@@ -84,3 +84,24 @@ def test_render_text_qr_expired():
     text = render_text(make_event(kind="qr_expired", qr_stale=True), qr_url="")
     assert "二维码已经过期" in text
     assert "重新发起登录" in text
+
+
+def test_webhook_payload_telegram_uses_url_as_chat_id():
+    """BUG-047：README 约定 url=chat_id、token=Bot Token，此前 chat_id 会被清空导致发不出去。"""
+    notifier = WebhookNotifier(
+        WebhookConfig(type="telegram", url="-1001234567890", token="123:ABC")
+    )
+    url, payload = notifier._payload(make_event(), "hello")
+    assert url == "https://api.telegram.org/bot123:ABC/sendMessage"
+    assert payload["chat_id"] == "-1001234567890"
+    assert payload["text"] == "hello"
+
+
+def test_webhook_payload_telegram_accepts_full_endpoint():
+    """兼容写法：url 直接给完整 API 地址时，token 当 chat_id。"""
+    notifier = WebhookNotifier(
+        WebhookConfig(type="telegram", url="https://api.telegram.org/bot1:x/sendMessage", token="42")
+    )
+    url, payload = notifier._payload(make_event(), "hi")
+    assert url == "https://api.telegram.org/bot1:x/sendMessage"
+    assert payload["chat_id"] == "42"
