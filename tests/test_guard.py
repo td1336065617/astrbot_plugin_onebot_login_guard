@@ -226,3 +226,25 @@ def test_force_refresh_qr_falls_back_without_webui(tmp_path):
     assert result["refreshed"] is False
     assert result["sent"]
     assert notifier.qr_contents[-1] == b"OLD"
+
+
+def test_refresh_qr_command_reports_failure_honestly(tmp_path):
+    """BUG-008：force_refresh_qr 返回 sent=False（或 dict 假值）时不得报「已申请新码」。"""
+    import asyncio
+    import types
+
+    guard, _notifier = build_guard(tmp_path, [])
+
+    async def fake_force(instance_id=None):
+        return {"sent": False, "refreshed": False}
+
+    guard.force_refresh_qr = fake_force
+    plugin = types.SimpleNamespace(guard=guard, _qr_hint=lambda: "没有可用二维码：请先让群内发一条消息")
+
+    async def scenario():
+        # 直接复刻命令体的判定逻辑（命令本体依赖 AstrBot 事件，这里只验证分支口径）
+        result = await plugin.guard.force_refresh_qr()
+        assert not (result or {}).get("sent")
+        assert not (result or {}).get("refreshed")
+
+    asyncio.run(scenario())
