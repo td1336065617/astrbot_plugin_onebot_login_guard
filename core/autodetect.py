@@ -100,6 +100,7 @@ class Discovery:
         }
 
 
+# keep-alive: 预留 API（当前无调用方，接线前请保留；扫描见 tools/deadcode_scan.py）——_read_text
 def _read_text(path: str) -> str:
     try:
         return Path(path).read_text(encoding="utf-8", errors="ignore")
